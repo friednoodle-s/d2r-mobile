@@ -13,6 +13,7 @@
 // pointed at the skill (as dm_freetp.c), movement by the original fixed-point teleport dm_teleport (as dm_rift.c's test clear), exploration by nearest unvisited room centre, looting by the original pick-up packet 0x16.
 #include "dm_autoplay.h"
 #include "dm_summon.h"
+#include "dm_bossrush.h"
 #include "dm_unit.h"
 #include "hle.h"
 #include "dm.h"
