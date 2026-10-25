@@ -17,6 +17,7 @@
 @property (nonatomic, strong) UIStepper *stepper;
 @property (nonatomic, strong) NSTimer *timer;
 @property (nonatomic) int boss;
+@property (nonatomic) BOOL moved;   // 玩家拖过按钮：之后不再自动放回左上角 | the player has dragged the button: no longer snapped back to the top-left
 @end
 
 static DmSummonPanel *g_panel;
@@ -41,7 +42,7 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     if (!(self = [super init])) return nil;
     _boss = DM_SUM_DIABLO; _bossButtons = [NSMutableArray array];
     _fab = [UIButton buttonWithType:UIButtonTypeCustom];
-    _fab.frame = CGRectMake(12, 120, 52, 52); _fab.layer.cornerRadius = 26;
+    _fab.frame = CGRectMake(12, 12, 52, 52); _fab.layer.cornerRadius = 26;
     _fab.backgroundColor = [UIColor colorWithRed:0.45 green:0.08 blue:0.06 alpha:0.85];
     _fab.layer.borderWidth = 2; _fab.layer.borderColor = [UIColor colorWithRed:0.85 green:0.7 blue:0.35 alpha:1].CGColor;
     [_fab setTitle:@(dm_ui("dmSumFab")) forState:UIControlStateNormal]; _fab.titleLabel.font = [UIFont boldSystemFontOfSize:22];
@@ -97,7 +98,7 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     CGFloat top = ((k + 2) / 3) * (bh + 8) + 6;   // 按钮占的行数（每行 3 个） | rows taken by the buttons (3 per row)
     for (int i = 0; i < 2 + DM_NBUFF; i++) { CGFloat yy = top + i * 42; [_pageCheat viewWithTag:950 + i].frame = CGRectMake(0, yy, pw - 70, 36); [_pageCheat viewWithTag:960 + i].frame = CGRectMake(pw - 56, yy + 2, 51, 31); }
     _pageCheat.contentSize = CGSizeMake(pw, top + (2 + DM_NBUFF) * 42);
-    CGRect f = _fab.frame; f.origin.x = MAX(0, MIN(f.origin.x, b.size.width - f.size.width)); f.origin.y = MAX(0, MIN(f.origin.y, b.size.height - f.size.height)); _fab.frame = f;
+    [self placeFab:b];
 }
 - (void)toggle {
     _panel.hidden = !_panel.hidden;
@@ -106,7 +107,15 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     else { [_timer invalidate]; _timer = nil; }
 }
 - (void)tick { _aliveLabel.text = [NSString stringWithFormat:@(dm_ui("dmSumAlive")), dm_summon_alive()]; }
+// 按钮缺省在左上角（让开刘海 / 圆角的安全区再留 8 点）；拖过以后只保证不出界
+// The button defaults to the top-left (inside the safe area for the notch / rounded corners, plus 8 points); once dragged it is only kept on screen
+- (void)placeFab:(CGRect)b {
+    UIEdgeInsets in = _fab.superview.safeAreaInsets; CGRect f = _fab.frame;
+    if (!_moved) f.origin = CGPointMake(in.left + 8, in.top + 8);
+    f.origin.x = MAX(0, MIN(f.origin.x, b.size.width - f.size.width)); f.origin.y = MAX(0, MIN(f.origin.y, b.size.height - f.size.height)); _fab.frame = f;
+}
 - (void)drag:(UIPanGestureRecognizer *)g {
+    _moved = YES;
     UIView *host = _fab.superview; CGPoint d = [g translationInView:host]; [g setTranslation:CGPointZero inView:host];
     CGRect f = _fab.frame; f.origin.x = MAX(0, MIN(f.origin.x + d.x, host.bounds.size.width - f.size.width)); f.origin.y = MAX(0, MIN(f.origin.y + d.y, host.bounds.size.height - f.size.height)); _fab.frame = f;
 }
@@ -121,7 +130,7 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
 @end
 
 void dm_summon_panel_attach(UIView *host) { if (!g_panel) g_panel = [[DmSummonPanel alloc] initInView:host]; }
-void dm_summon_panel_layout(CGRect bounds) { if (g_panel && !g_panel.panel.hidden) [g_panel layoutIn:bounds]; }
+void dm_summon_panel_layout(CGRect bounds) { if (!g_panel) return; [g_panel placeFab:bounds]; if (!g_panel.panel.hidden) [g_panel layoutIn:bounds]; }
 void dm_summon_panel_hidden(BOOL hidden) {   // 前端页面（选角等）整套藏起来，面板顺手关掉 | on front-end pages (character select etc.) hide everything and close the panel
     if (!g_panel) return; g_panel.fab.hidden = hidden; if (hidden && !g_panel.panel.hidden) [g_panel toggle];
 }
