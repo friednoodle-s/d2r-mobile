@@ -1,0 +1,156 @@
+// 召唤控制台（界面见 dm/ios/Sources/dm_summon_panel.m）：
+//   召唤：在玩家身边刷首领，再交给原版「束缚恶魔」的转化函数变成玩家的随从（跟随、打怪、不打玩家），死了不掉落；一键清除只清我们刷的。
+//   通用修改：升级 / 升满、金币加满、加属性点 / 技能点、补满、无敌、无限法力耐力。全部是服务端写属性，同 diag.c 的测试开关 DM_TEST_STAT / DM_TEST_GOLD。
+// 线程：界面线程只往原子量里投请求，刷怪、转化、写属性都在服务端拍里做（同首领连战：原版这些函数只许服务端线程调）。
+// 依据：
+//   刷怪 0x7ce630(游戏, 房间, 1, 类号, x, y, 1, 0, 0x10)、找空地 0x7160d0，同首领连战（dm_bossrush.c）；
+//   转化 0x7aa190(游戏, 主人, 目标, 技能号, …)：原版束缚恶魔服务端那一下（调用点 0x7024c4，技能 382），参数见 to_minion；
+//   清除 0x6c0c30(游戏, 主人, 单位 id, 1)：原版解除随从；先给单位 +0x124 置 bit 17（原版给召唤物的「不掉落」）——同秘境清怪（dm_rift.c）；
+//   属性：写 0x5bc1f0(单位, 属性, 值, 0)、读 0x5b9290；4 属性点、5 技能点、6/7 生命、8/9 法力、10/11 耐力（这三对 ×256）、12 等级、13 经验、14 身上金币。
+// Summon console (UI in dm/ios/Sources/dm_summon_panel.m):
+//   Summon: spawn a boss next to the player, then hand it to the original game's Bind Demon conversion so it becomes the player's minion (follows, fights monsters, does not hit the player); it drops nothing on death; clear-all only clears what we spawned.
+//   General cheats: level up / level 99, max gold, add stat / skill points, refill, god mode, infinite mana and stamina. All are server-side stat writes, same as diag.c's test switches DM_TEST_STAT / DM_TEST_GOLD.
+// Threads: the UI thread only posts requests into atomics; spawning, conversion and stat writes all happen in the server tick (same as the boss rush: these original functions may only be called from the server thread).
+// Basis:
+//   spawn 0x7ce630(game, room, 1, class id, x, y, 1, 0, 0x10), find open ground 0x7160d0, same as the boss rush (dm_bossrush.c);
+//   conversion 0x7aa190(game, owner, target, skill id, ...): the original Bind Demon server step (call site 0x7024c4, skill 382), parameters see to_minion;
+//   clear 0x6c0c30(game, owner, unit id, 1): the original dismiss-minion; first set bit 17 of unit +0x124 (the original "no drop" for summons) -- same as the rift monster sweep (dm_rift.c);
+//   stats: set 0x5bc1f0(unit, stat, value, 0), get 0x5b9290; 4 stat points, 5 skill points, 6/7 life, 8/9 mana, 10/11 stamina (these three pairs ×256), 12 level, 13 experience, 14 gold on person.
+#include "dm_summon.h"
+#include "dm_bossrush.h"
+#include "dm_unit.h"
+#include "dm_hud_exp.h"
+#include "hle.h"
+#include "dm.h"
+#include "dm_i18n.h"
+#include <stdatomic.h>
+#include <stdlib.h>
+#include <string.h>
+
+static const struct { int cls; const char *key; } k_boss[DM_SUM_NBOSS] = {
+    { 156, "dmBossAndariel" }, { 211, "dmBossDuriel" }, { 242, "dmBossMephisto" }, { 243, "dmBossDiablo" }, { 544, "dmBossBaal" } };   // monstats 行号同首领连战；名字是串表键（dm/i18n/ui_text.tsv） | monstats rows same as the boss rush; names are string table keys (dm/i18n/ui_text.tsv)
+#define MAX_KEEP 20                     // 同时在场的召唤首领上限：再多画面和性能都扛不住 | cap on summoned bosses alive at once: more than this is too much for the screen and performance
+#define BIND_SKILL 382                  // 束缚恶魔（原版调用点 0x7024c4 传的技能号） | Bind Demon (the skill id the original call site 0x7024c4 passes)
+
+static _Atomic int g_req_boss = -1, g_req_n, g_req_clear, g_req_op, g_req_arg, g_god, g_infmp, g_alive;
+static uint8_t *B;
+static uint32_t g_ids[MAX_KEEP]; static int g_nids;   // 我们刷出来的单位 id（服务端线程独占） | unit ids we spawned (owned by the server thread)
+static uint64_t g_G;                                  // 换局（游戏对象变了）就清名单 | a new run (the game object changed) clears the list
+
+void dm_summon_request(int boss, int count) { if (boss < 0 || boss >= DM_SUM_NBOSS) return; if (count < 1) count = 1; if (count > 10) count = 10; atomic_store(&g_req_n, count); atomic_store(&g_req_boss, boss); }
+void dm_summon_clear(void) { atomic_store(&g_req_clear, 1); }
+void dm_cheat_request(int op, int arg) { atomic_store(&g_req_arg, arg); atomic_store(&g_req_op, op); }
+void dm_cheat_set_god(int on) { atomic_store(&g_god, !!on); }
+void dm_cheat_set_inf_mana(int on) { atomic_store(&g_infmp, !!on); }
+int dm_cheat_god(void) { return atomic_load(&g_god); }
+int dm_cheat_inf_mana(void) { return atomic_load(&g_infmp); }
+int dm_summon_alive(void) { return atomic_load(&g_alive); }
+const char *dm_summon_key(int boss) { return boss >= 0 && boss < DM_SUM_NBOSS ? k_boss[boss].key : ""; }
+
+static uint64_t rd(uint64_t a) { return a ? *(volatile uint64_t *)(uintptr_t)a : 0; }
+static uint64_t unit_room(uint64_t u) { uint64_t p = rd(u + 0x38); return p ? rd(p + 0x20) : 0; }   // 玩家 / 怪物：路径 +0x20 是房间 | players / monsters: path +0x20 is the room
+static int unit_xy(uint64_t u, int *x, int *y) { uint64_t p = rd(u + 0x38); if (!p) return 0; *x = *(uint16_t *)(uintptr_t)(p + 2); *y = *(uint16_t *)(uintptr_t)(p + 6); return 1; }
+static uint64_t find_unit(uint64_t G, uint32_t id) { for (int b = 0; b < 128; b++) for (uint64_t u = rd(G + 0x2230 + 0x400 + 8 * b); u; u = rd(u + 0x158)) if (*(uint32_t *)(uintptr_t)(u + 8) == id) return u; return 0; }
+static int gs(uint64_t u, int st) { return ((int (*)(uint64_t, int, int))(B + 0x5b9290))(u, st, 0); }
+static void ss(uint64_t u, int st, int v) { ((void (*)(uint64_t, int, int, int))(B + 0x5bc1f0))(u, st, v, 0); }
+static uint64_t free_spot(uint64_t G, uint64_t room, int32_t pos[2]) { uint64_t out = 0; ((void (*)(uint64_t, uint64_t, int32_t *, int, int, uint64_t *, int, int))(B + 0x7160d0))(G, room, pos, 3, 0x400, &out, 4, 100); return out; }
+static int alive(uint64_t u) { uint32_t m = *(uint32_t *)(uintptr_t)(u + 0xc); return m != 0 && m != 12; }   // 模式 0 正在死、12 已死 | mode 0 dying, 12 dead
+static int in_town(int lv) { return lv == 1 || lv == 40 || lv == 75 || lv == 103 || lv == 109; }
+
+// 把刚刷出的怪 u 变成 player 的随从：原版束缚恶魔的服务端转化 0x7aa190(游戏, 主人, 目标, 技能号, 技能等级, 关联编号, 初始化)，返回 bit 0 = 原版接受了。
+//   技能等级：BoundStat 等算式的等级（原版取施法者技能等级，夹在 [0, *[数据表 + 0x1500]]）；关联编号：原版每次取 G+0x16c 加 1（到 INT_MAX 回到 1）写回再传；
+//   初始化 = 1：按新束缚的目标走初始化块（怪物修饰、等级压到主人等级），原版施法那一路传 1（0x7ab940），读档重建那一路传 0（0x7024c4）。
+//   技能记录 +0x112 是宠物类型（越界回落 21 = 束缚恶魔），由 0x6c1b00 挂进玩家宠物表
+// Turn the freshly spawned monster u into player's minion: the original Bind Demon server conversion 0x7aa190(game, owner, target, skill id, skill level, link id, initialize); bit 0 of the return = accepted.
+//   Skill level: the level used by formulas such as BoundStat (the original takes the caster's skill level, clamped to [0, *[data table + 0x1500]]); link id: each time the original takes G+0x16c plus 1 (wrapping to 1 at INT_MAX), writes it back and passes it;
+//   initialize = 1: run the init block for a freshly bound target (monster mods, level brought down to the owner's level); the original cast path passes 1 (0x7ab940), the load-rebuild path passes 0 (0x7024c4).
+//   Skill record +0x112 is the pet type (out of range falls back to 21 = bound demon); 0x6c1b00 hooks it into the player's pet table
+#define BIND_LEVEL 20
+// 宠物表：[[玩家+0x10]+0x98] 起每种宠物类型一个 0x20 字节槽：+0 链头（节点 +4 单位 id、+0x18 下一个）、+8 数量、+0xc 上限（每次束缚由技能记录 +0x114 的算式重算，超了原版裁掉最旧的）
+// Pet table: from [[player+0x10]+0x98], one 0x20-byte slot per pet type: +0 chain head (node +4 unit id, +0x18 next), +8 count, +0xc cap (recomputed on every bind from the formula at skill record +0x114; above it the original trims the oldest)
+static uint64_t pet_slot(uint64_t G, uint64_t player) {
+    uint8_t ver = *(uint8_t *)(uintptr_t)(G + 0x106); if (ver < 1 || ver > 3) return 0;
+    uint64_t T = rd((uint64_t)(uintptr_t)(B + 0x2d64a18 + ver * 16)); if (!T || rd(T + 0x11f0) <= BIND_SKILL) return 0;
+    uint64_t rec = rd(T + 0x11e8) + (uint64_t)BIND_SKILL * 0x2ec; uint32_t nt = *(uint32_t *)(uintptr_t)(T + 0x1300), ty = *(uint8_t *)(uintptr_t)(rec + 0x112);
+    if (ty >= nt) ty = 21;   // 同 0x7aa5fc：越界回落束缚恶魔 | same as 0x7aa5fc: out of range falls back to bound demon
+    uint64_t pd = rd(player + 0x10), lst = pd ? rd(pd + 0x98) : 0, arr = lst ? rd(lst) : 0; return arr ? arr + (uint64_t)ty * 0x20 : 0;
+}
+static int is_pet(uint64_t slot, uint32_t id) { int k = 0; for (uint64_t nd = rd(slot); nd && k < 256; nd = rd(nd + 0x18), k++) if (*(uint32_t *)(uintptr_t)(nd + 4) == id) return 1; return 0; }
+static int to_minion(uint64_t G, uint64_t player, uint64_t u) {
+    int32_t *seq = (int32_t *)(uintptr_t)(G + 0x16c); int link = *seq == 0x7fffffff ? 1 : *seq + 1; *seq = link;
+    uint32_t id = *(uint32_t *)(uintptr_t)(u + 8);
+    int r = ((int (*)(uint64_t, uint64_t, uint64_t, int, int, int, int))(B + 0x7aa190))(G, player, u, BIND_SKILL, BIND_LEVEL, link, 1) & 1;
+    // 原版只在返回值上说「接受了」，挂没挂进宠物表不查（上限 0 时会直接清掉新目标）：按 id 回查宠物表才算数
+    // The original's return value only says "accepted"; it does not check whether the pet table entry took (with a cap of 0 it clears the new target outright): it only counts after looking the id up in the pet table
+    uint64_t slot = pet_slot(G, player); int in = r && slot && is_pet(slot, id);
+    if (in && find_unit(G, id) == u) {   // 原版施法成功后的两处收尾（0x7ab948–0x7ab970）照做 | the two follow-ups after a successful original cast (0x7ab948–0x7ab970), done the same
+        *(uint32_t *)(uintptr_t)(u + 0x124) |= 0x800; uint64_t md = rd(u + 0x10); if (md) *(uint16_t *)(uintptr_t)(md + 0x30) |= 8; }
+    LOG("召唤：束缚 id %u → 返回 %d、宠物表%s；该类型 数量 %d 上限 %d", id, r, in ? "有" : "没有", slot ? *(int32_t *)(uintptr_t)(slot + 8) : -1, slot ? *(int32_t *)(uintptr_t)(slot + 0xc) : -1);
+    return in;
+}
+
+static void summon(uint64_t G, uint64_t player, int boss, int n) {
+    int lv = dm_unit_level(player); uint64_t room = unit_room(player); int px, py;
+    if (!lv || !room || !unit_xy(player, &px, &py)) return;
+    if (in_town(lv)) { dm_game_notice(B, dm_str(B, "dmSumTown")); return; }
+    static const int8_t ring[10][2] = { {3,0}, {-3,0}, {0,3}, {0,-3}, {3,3}, {-3,-3}, {3,-3}, {-3,3}, {5,0}, {-5,0} };
+    int ok = 0, conv = 0;
+    for (int i = 0; i < n && g_nids < MAX_KEEP; i++) {
+        int32_t pos[2] = { px + ring[i][0], py + ring[i][1] }; uint64_t rr = free_spot(G, room, pos);
+        uint64_t u = rr ? ((uint64_t (*)(uint64_t, uint64_t, int, int, int, int, int, int, uint64_t))(B + 0x7ce630))(G, rr, 1, k_boss[boss].cls, pos[0], pos[1], 1, 0, 0x10) : 0;
+        if (!u) continue; ok++;
+        *(uint32_t *)(uintptr_t)(u + 0x124) |= 0x20000;   // 不掉落：死了不出宝，也防清除时爆一地 | no drop: nothing on death, and no loot shower when cleared
+        int c = to_minion(G, player, u); conv += c;
+        g_ids[g_nids++] = *(uint32_t *)(uintptr_t)(u + 8);
+        LOG("召唤：%s（类号 %d）id %u 在 %d,%d（玩家 %d,%d）→ 转随从%s", k_boss[boss].key, k_boss[boss].cls, *(uint32_t *)(uintptr_t)(u + 8), pos[0], pos[1], px, py, c ? "成" : "败");
+    }
+    char msg[160]; snprintf(msg, sizeof msg, dm_str(B, "dmSumDone"), dm_str(B, k_boss[boss].key), ok); dm_game_notice(B, ok ? msg : dm_str(B, "dmSumNoRoom"));
+    if (conv < ok) dm_game_notice(B, dm_str(B, "dmSumPartial"));
+}
+
+// 清除：原版解除随从那一下 0x6c0c30(游戏, 主人, 单位 id, 1)（解除技能入口 0x7bc3d0 就这么调）：摘出宠物表并交给原版消失 / 死亡处理。
+// 先确认还在我们名单里、还挂在这个玩家的宠物表上；没挂上的（束缚没成）用杀怪 0x7d82b0(游戏, 单位, 0, 1) 收掉。都先置不掉落
+// Clear: the original dismiss-minion call 0x6c0c30(game, owner, unit id, 1) (the dismiss skill entry 0x7bc3d0 calls it this way): takes it off the pet table and hands it to the original vanish / death handling.
+// First confirm it is still on our list and still on this player's pet table; those not on it (bind failed) are taken down with the kill 0x7d82b0(game, unit, 0, 1). No-drop is set first in both cases
+static void clear_all(uint64_t G, uint64_t player) {
+    uint64_t slot = pet_slot(G, player); int n = 0;
+    for (int i = 0; i < g_nids; i++) { uint32_t id = g_ids[i]; uint64_t u = find_unit(G, id); if (!u || !alive(u)) continue;
+        *(uint32_t *)(uintptr_t)(u + 0x124) |= 0x20000;
+        if (slot && is_pet(slot, id)) ((void (*)(uint64_t, uint64_t, uint32_t, int))(B + 0x6c0c30))(G, player, id, 1);
+        else ((void (*)(uint64_t, uint64_t, uint64_t, int))(B + 0x7d82b0))(G, u, 0, 1);
+        n++; }
+    g_nids = 0; LOG("召唤：一键清除 %d 只", n); dm_game_notice(B, dm_str(B, n ? "dmSumCleared" : "dmSumNone"));
+}
+
+static void cheat(uint64_t player, int op, int arg) {
+    int lv = gs(player, 12), to = lv;
+    switch (op) {
+    case DM_CHEAT_LEVEL_UP: to = lv + 1; break;
+    case DM_CHEAT_LEVEL_99: to = 99; break;
+    case DM_CHEAT_GOLD_MAX: ss(player, 14, lv * 10000); dm_game_notice(B, dm_str(B, "dmCheatGoldDone")); return;   // 身上金币上限 = 等级 × 1 万 | gold-on-person cap = level × 10,000
+    case DM_CHEAT_STATPTS: ss(player, 4, gs(player, 4) + arg); dm_game_notice(B, dm_str(B, "dmCheatStatDone")); return;
+    case DM_CHEAT_SKILLPTS: ss(player, 5, gs(player, 5) + arg); dm_game_notice(B, dm_str(B, "dmCheatSkillDone")); return;
+    case DM_CHEAT_REFILL: ss(player, 6, gs(player, 7)); ss(player, 8, gs(player, 9)); ss(player, 10, gs(player, 11)); return;
+    default: return; }
+    if (to > 99) to = 99;
+    if (to <= lv) return;
+    // 升级：等级、经验写到新等级的门槛，按原版每级 5 属性点、1 技能点补上（生命 / 法力的每级成长不在这里，要读档后由游戏按等级重算——待真机看）
+    // Level up: level, and experience set to the new level's threshold; 5 stat points and 1 skill point per level are added as in the original (per-level life / mana growth is not done here -- to be checked on device whether the game recomputes it)
+    ss(player, 12, to); ss(player, 13, (int)k_exp[to - 1]); ss(player, 4, gs(player, 4) + 5 * (to - lv)); ss(player, 5, gs(player, 5) + (to - lv));
+    LOG("通用修改：等级 %d → %d", lv, to); char msg[96]; snprintf(msg, sizeof msg, dm_str(B, "dmCheatLevelDone"), to); dm_game_notice(B, msg);
+}
+
+void dm_summon_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
+    B = main_base; if (!G || !player) return;
+    if (G != g_G) { g_G = G; g_nids = 0; }
+    int boss = atomic_exchange(&g_req_boss, -1); if (boss >= 0) summon(G, player, boss, atomic_load(&g_req_n));
+    if (atomic_exchange(&g_req_clear, 0)) clear_all(G, player);
+    int op = atomic_exchange(&g_req_op, 0); if (op) cheat(player, op, atomic_load(&g_req_arg));
+    uint32_t m = *(uint32_t *)(uintptr_t)(player + 0xc);
+    if (m != 0 && m != 12 && m != 17) {   // 玩家没在死：无敌 / 无限法力每拍补满 | player not dying: god mode / infinite mana top up every tick
+        if (atomic_load(&g_god)) { int mx = gs(player, 7); if (gs(player, 6) < mx) ss(player, 6, mx); }
+        if (atomic_load(&g_infmp)) { int mx = gs(player, 9); if (gs(player, 8) < mx) ss(player, 8, mx); mx = gs(player, 11); if (gs(player, 10) < mx) ss(player, 10, mx); }
+    }
+    int n = 0, w = 0; for (int i = 0; i < g_nids; i++) { uint64_t u = find_unit(G, g_ids[i]); if (u && alive(u)) { g_ids[w++] = g_ids[i]; n++; } }   // 死了的、走远被卸载的都从名单去掉 | drop the dead and those unloaded far away from the list
+    g_nids = w; atomic_store(&g_alive, n);
+}

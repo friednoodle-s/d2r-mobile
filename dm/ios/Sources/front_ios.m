@@ -146,7 +146,7 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
     self.isAccessibilityElement=YES; self.accessibilityIdentifier=@"dm_touch_surface"; self.accessibilityLabel=SWT("dmA11ySurface");
     dm_tc_init(&_controls,f.size.width,f.size.height); _controls.mouse_click_mode=1;   // 功能页里非物品区的点按走界面鼠标点击 | Taps outside the item area in function pages go through UI mouse clicks
     _overlay=[[DmTouchOverlay alloc] initWithFrame:self.bounds]; _overlay.controls=&_controls; _overlay.hidden=YES;   // 启动即前端页面：进局（读取画面撤下）才显示 | Front-end page right at launch: shown only after entering a run (loading screen removed)
-    [self addSubview:_overlay]; _info=[[UIView alloc] initWithFrame:self.bounds]; _info.userInteractionEnabled=NO; _info.hidden=YES; [self addSubview:_info]; g_touch_view=self; dm_gamepad_start(pad_mode_changed);
+    [self addSubview:_overlay]; _info=[[UIView alloc] initWithFrame:self.bounds]; _info.userInteractionEnabled=NO; _info.hidden=YES; [self addSubview:_info]; { void dm_summon_panel_attach(UIView *); void dm_summon_panel_hidden(BOOL); dm_summon_panel_attach(self); dm_summon_panel_hidden(YES); } g_touch_view=self; dm_gamepad_start(pad_mode_changed);
     _rsCover=[[DmSwallowView alloc] initWithFrame:self.bounds]; _rsCover.backgroundColor=UIColor.blackColor; _rsCover.hidden=YES; _rsCover.userInteractionEnabled=YES;   // 开的时候挂到窗口上（restartCover） | Attached to the window when turned on (restartCover)
     { extern void (*g_dm_restart_cover_hook)(int); g_dm_restart_cover_hook=restart_cover_hook; }
     _navigation=0; [self navigationMode:atomic_load(&g_touch_navigation)];
@@ -171,7 +171,7 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
     if (safeChanged || tallChanged || _controls.layout.width!=self.bounds.size.width || _controls.layout.height!=self.bounds.size.height) {
         [self cancelControlsFrom:"layout"]; dm_tc_resize(&_controls,self.bounds.size.width,self.bounds.size.height);
     }
-    _overlay.frame=self.bounds; _info.frame=self.bounds; [_overlay setNeedsDisplay]; if(!_rsCover.hidden && self.window) _rsCover.frame=self.window.bounds;
+    _overlay.frame=self.bounds; _info.frame=self.bounds; { void dm_summon_panel_layout(CGRect); dm_summon_panel_layout(self.bounds); } [_overlay setNeedsDisplay]; if(!_rsCover.hidden && self.window) _rsCover.frame=self.window.bounds;
 }
 - (void)restartCover:(int)mode {   // 挂在窗口最上层、整窗大小：盖住游戏视图之外的留边与别的兄弟视图，触点全落在它身上被吞掉。2 = 透明（读取画面露出来） | Attached at the top of the window at full window size: covers the margins outside the game view and other sibling views, and all touch points land on it and are swallowed. 2 = transparent (the loading screen shows through)
     UIView *host=self.window ?: self; if(mode){ if(_rsCover.superview!=host) [host addSubview:_rsCover]; _rsCover.frame=host.bounds; [host bringSubviewToFront:_rsCover]; }
@@ -181,7 +181,7 @@ static void restart_cover_hook(int on) { dispatch_async(dispatch_get_main_queue(
 // 前端页面（主菜单 / 选角 / 建角 / 读取画面，即不在局内）：不显示摇杆与技能圆钮，触点直接当原生点击交给游戏界面（dm_ui_touch → 鼠标消息，dm_cursor.c）
 // Front-end pages (main menu / character select / character creation / loading screen, i.e. not in a run): no stick or round skill buttons shown; touch points are given straight to the game UI as native clicks (dm_ui_touch → mouse messages, dm_cursor.c)
 - (void)padMode:(BOOL)pad { _padMode=pad; _overlay.hidden=_feMode || pad; _info.hidden=_feMode; if(pad) { _tipUntil=-2; dm_tc_cancel_all(&_controls); [self pushFrom:"padmode" phase:"none"]; } }   // 手柄模式藏触屏控件层（dm_gamepad.m 回调） | Controller mode hides the touch controls layer (dm_gamepad.m callback)
-- (void)frontendMode:(BOOL)fe { _feMode=fe; _overlay.hidden=fe || _padMode; _info.hidden=fe; if(fe) { _pendEnd=nil; _finalAsked=NO; for(int i_=0;i_<16;i_++) _slot[i_]=nil; dm_tc_cancel_all(&_controls); [self pushFrom:"frontend" phase:"none"]; } }
+- (void)frontendMode:(BOOL)fe { _feMode=fe; _overlay.hidden=fe || _padMode; _info.hidden=fe; { void dm_summon_panel_hidden(BOOL); dm_summon_panel_hidden(fe); } if(fe) { _pendEnd=nil; _finalAsked=NO; for(int i_=0;i_<16;i_++) _slot[i_]=nil; dm_tc_cancel_all(&_controls); [self pushFrom:"frontend" phase:"none"]; } }
 - (void)navigationMode:(int)n {
     if (_navigation==n) return;
     dm_tc_set_navigation_mode(&_controls,n); _navigation=n; atomic_store(&g_nav_pub,n);   // 内部按非零归一 | Internally normalized to non-zero
