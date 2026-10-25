@@ -206,12 +206,22 @@ static void no_req(uint64_t it) {
     if (want > 155) want = 155;
     if (want != cur) ((int (*)(uint8_t, uint64_t, int, int, int))(B + 0x5bbe20))(v, M, 91, want, 0);
 }
+static int dispatch(uint64_t G, uint64_t pl, const uint8_t *p, uint32_t n);
+static int pk_grid(uint64_t G, uint64_t pl, int op, uint32_t id, int x, int y, int page);
+static int find_free(uint64_t pl, uint64_t it, uint32_t *x, uint32_t *y);
+static uint64_t cursor_item(uint64_t pl);
 // 捡进背包：返回 1 = 进了（模式 0），0 = 还在地上 | pick up into the inventory: 1 = in (mode 0), 0 = still on the ground
 static int pick_up(uint64_t G, uint64_t player, uint64_t it) {
     uint64_t ip = rd(it + 0x38); if (!ip) return 0; uint8_t pk[17] = { 0x16 }; uint32_t one = 1;
     memcpy(pk + 1, (void *)(uintptr_t)(it + 8), 4); memcpy(pk + 5, (void *)(uintptr_t)(ip + 0x10), 4); memcpy(pk + 9, (void *)(uintptr_t)(ip + 0x14), 4); memcpy(pk + 13, &one, 4);
     uint32_t *busy = (uint32_t *)(uintptr_t)(G + 0x19050), old = *busy; *busy = 1;
     ((void (*)(uint64_t, uint64_t, uint8_t *, uint32_t))(B + 0x6e5b40))(G, player, pk, 17); *busy = old;
+    // 手柄版捡起时对应装备位空着会直接穿上（模式 1，云端测试 7.1：岁月之冠进了头部）：0x1c {op, id, 装备位} 取到光标，再 0x18 放进背包空格
+    // In the controller version a pick-up whose equipment slot is empty is worn at once (mode 1, cloud test 7.1: Crown of Ages went onto the head): 0x1c {op, id, slot} takes it to the cursor, then 0x18 puts it in a free inventory cell
+    if (*(uint32_t *)(uintptr_t)(it + 0xc) == 1) { uint64_t d = rd(it + 0x10); uint32_t id = *(uint32_t *)(uintptr_t)(it + 8), slot = d ? *(uint8_t *)(uintptr_t)(d + 0x54) : 0, x = 0, y = 0;
+        uint8_t q[9] = { 0x1c }; memcpy(q + 1, &id, 4); memcpy(q + 5, &slot, 4); dispatch(G, player, q, 9);
+        int on_cur = cursor_item(player) == it, fr = on_cur && find_free(player, it, &x, &y); if (fr) pk_grid(G, player, 0x18, id, (int)x, (int)y, 0);
+        LOG("刷装备：id %u 捡起时自动穿到装备位 %u → 取下%s、放进背包%s", id, slot, on_cur ? "成" : "【红】败", *(uint32_t *)(uintptr_t)(it + 0xc) == 0 ? "成" : "【红】败"); }
     int ok = *(uint32_t *)(uintptr_t)(it + 0xc) == 0; uint64_t pp = rd(player + 0x38);
     if (!ok) LOG("刷装备：捡起 id %u 没进背包（物品模式 %u 位置 %d,%d；玩家模式 %u 位置 %d,%d）", *(uint32_t *)(uintptr_t)(it + 8), *(uint32_t *)(uintptr_t)(it + 0xc),
         *(int32_t *)(uintptr_t)(ip + 0x10), *(int32_t *)(uintptr_t)(ip + 0x14), *(uint32_t *)(uintptr_t)(player + 0xc), pp ? *(uint16_t *)(uintptr_t)(pp + 2) : -1, pp ? *(uint16_t *)(uintptr_t)(pp + 6) : -1);
