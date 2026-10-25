@@ -14,6 +14,12 @@ void dm_cheat_set_god(int on);                 // 无敌（生命每拍回满）
 void dm_cheat_set_inf_mana(int on);            // 无限法力和耐力 | infinite mana and stamina
 int dm_cheat_god(void);
 int dm_cheat_inf_mana(void);
+// 属性开关：开着时每隔一会儿把角色的这些属性写到目标值，关掉写回 0（这些属性 itemstatcost 不存档，读档自然没了）
+// Stat toggles: while on, the character's stats below are written to the target values every so often; off writes them back to 0 (itemstatcost does not save these stats, so they are gone after a reload anyway)
+enum { DM_BUFF_MF, DM_BUFF_GF, DM_BUFF_EXP, DM_BUFF_SPEED, DM_BUFF_DAMAGE, DM_BUFF_RESIST, DM_BUFF_SKILLS, DM_NBUFF };
+void dm_cheat_set_buff(int buff, int on);
+int dm_cheat_buff(int buff);
+const char *dm_cheat_buff_key(int buff);       // 开关名字的串表键 | string table key of the toggle name
 int dm_summon_alive(void);                     // 界面显示：现存的召唤首领数（上一拍数的） | for the UI: number of summoned bosses alive (counted on the previous tick)
 const char *dm_summon_key(int boss);           // 首领名字的串表键（界面用 dm_ui 取） | string table key of the boss name (the UI looks it up with dm_ui)
 

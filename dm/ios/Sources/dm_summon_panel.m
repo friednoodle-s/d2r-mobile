@@ -10,7 +10,8 @@
 @property (nonatomic, strong) UIButton *fab;
 @property (nonatomic, strong) UIView *panel;
 @property (nonatomic, strong) UISegmentedControl *tabs;
-@property (nonatomic, strong) UIView *pageSummon, *pageCheat;
+@property (nonatomic, strong) UIView *pageSummon;
+@property (nonatomic, strong) UIScrollView *pageCheat;   // 按钮 + 一列开关，比面板高，可滚动 | buttons + a column of switches, taller than the panel, scrollable
 @property (nonatomic, strong) NSMutableArray<UIButton *> *bossButtons;
 @property (nonatomic, strong) UILabel *countLabel, *aliveLabel;
 @property (nonatomic, strong) UIStepper *stepper;
@@ -67,13 +68,13 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     UIButton *clr = mk_button(@(dm_ui("dmSumClear")), self, @selector(clearAll)); clr.tag = 902; [_pageSummon addSubview:clr];
     _aliveLabel = mk_label(@"", 14); [_pageSummon addSubview:_aliveLabel];
 
-    _pageCheat = [UIView new]; _pageCheat.hidden = YES; [_panel addSubview:_pageCheat];
+    _pageCheat = [UIScrollView new]; _pageCheat.hidden = YES; _pageCheat.indicatorStyle = UIScrollViewIndicatorStyleWhite; [_panel addSubview:_pageCheat];
     NSArray *cheats = @[@[@"dmCheatLv1", @(DM_CHEAT_LEVEL_UP), @0], @[@"dmCheatLv99", @(DM_CHEAT_LEVEL_99), @0], @[@"dmCheatGold", @(DM_CHEAT_GOLD_MAX), @0],
                         @[@"dmCheatStat", @(DM_CHEAT_STATPTS), @10], @[@"dmCheatSkill", @(DM_CHEAT_SKILLPTS), @5], @[@"dmCheatRefill", @(DM_CHEAT_REFILL), @0]];
     for (NSArray *c in cheats) { UIButton *b = mk_button(@(dm_ui([c[0] UTF8String])), self, @selector(cheat:)); b.tag = [c[1] intValue] * 1000 + [c[2] intValue]; [_pageCheat addSubview:b]; }
-    for (int i = 0; i < 2; i++) {
-        UILabel *l = mk_label(@(dm_ui(i ? "dmCheatInfMana" : "dmCheatGod")), 15); l.tag = 950 + i; [_pageCheat addSubview:l];
-        UISwitch *s = [UISwitch new]; s.tag = 960 + i; s.on = i ? dm_cheat_inf_mana() : dm_cheat_god();
+    for (int i = 0; i < 2 + DM_NBUFF; i++) {   // 0 无敌、1 无限法力、其后是属性开关（dm_summon.h DM_BUFF_*） | 0 god mode, 1 infinite mana, then the stat toggles (dm_summon.h DM_BUFF_*)
+        UILabel *l = mk_label(@(dm_ui(i == 0 ? "dmCheatGod" : i == 1 ? "dmCheatInfMana" : dm_cheat_buff_key(i - 2))), 15); l.tag = 950 + i; [_pageCheat addSubview:l];
+        UISwitch *s = [UISwitch new]; s.tag = 960 + i; s.on = i == 0 ? dm_cheat_god() : i == 1 ? dm_cheat_inf_mana() : dm_cheat_buff(i - 2);
         [s addTarget:self action:@selector(toggleSwitch:) forControlEvents:UIControlEventValueChanged]; [_pageCheat addSubview:s];
     }
     [self refreshBoss];
@@ -92,7 +93,8 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     y += 44;
     [_pageSummon viewWithTag:901].frame = CGRectMake(0, y, (pw - 8) / 2, bh); [_pageSummon viewWithTag:902].frame = CGRectMake((pw + 8) / 2, y, (pw - 8) / 2, bh);
     int k = 0; for (UIView *v in _pageCheat.subviews) if ([v isKindOfClass:UIButton.class]) { v.frame = CGRectMake((k % 3) * (bw + 8), (k / 3) * (bh + 8), bw, bh); k++; }
-    for (int i = 0; i < 2; i++) { CGFloat yy = 2 * (bh + 8) + 6 + i * 42; [_pageCheat viewWithTag:950 + i].frame = CGRectMake(0, yy, pw - 70, 36); [_pageCheat viewWithTag:960 + i].frame = CGRectMake(pw - 56, yy + 2, 51, 31); }
+    for (int i = 0; i < 2 + DM_NBUFF; i++) { CGFloat yy = 2 * (bh + 8) + 6 + i * 42; [_pageCheat viewWithTag:950 + i].frame = CGRectMake(0, yy, pw - 70, 36); [_pageCheat viewWithTag:960 + i].frame = CGRectMake(pw - 56, yy + 2, 51, 31); }
+    _pageCheat.contentSize = CGSizeMake(pw, 2 * (bh + 8) + 6 + (2 + DM_NBUFF) * 42);
     CGRect f = _fab.frame; f.origin.x = MAX(0, MIN(f.origin.x, b.size.width - f.size.width)); f.origin.y = MAX(0, MIN(f.origin.y, b.size.height - f.size.height)); _fab.frame = f;
 }
 - (void)toggle {
@@ -113,7 +115,7 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
 - (void)summon { dm_summon_request(_boss, (int)_stepper.value); }
 - (void)clearAll { dm_summon_clear(); }
 - (void)cheat:(UIButton *)b { dm_cheat_request((int)(b.tag / 1000), (int)(b.tag % 1000)); }
-- (void)toggleSwitch:(UISwitch *)s { if (s.tag == 960) dm_cheat_set_god(s.on); else dm_cheat_set_inf_mana(s.on); }
+- (void)toggleSwitch:(UISwitch *)s { if (s.tag == 960) dm_cheat_set_god(s.on); else if (s.tag == 961) dm_cheat_set_inf_mana(s.on); else dm_cheat_set_buff((int)s.tag - 962, s.on); }
 @end
 
 void dm_summon_panel_attach(UIView *host) { if (!g_panel) g_panel = [[DmSummonPanel alloc] initInView:host]; }

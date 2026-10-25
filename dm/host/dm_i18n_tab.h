@@ -482,4 +482,11 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmCheatStatDone", "已加属性点", "Stat points added", "Atributos añadidos", "Atributos añadidos", "Очки характеристик добавлены", "능력치 포인트를 추가했습니다" },
     { "dmCheatSkillDone", "已加技能点", "Skill points added", "Habilidades añadidas", "Habilidades añadidas", "Очки умений добавлены", "스킬 포인트를 추가했습니다" },
     { "dmCheatLevelDone", "等级提升到 %d", "Level raised to %d", "Nivel subido a %d", "Nivel subido a %d", "Уровень повышен до %d", "레벨이 %d(으)로 올랐습니다" },
+    { "dmBuffMf", "掉宝率 +500%", "Magic Find +500%", "Hallazgo mágico +500%", "Hallazgo mágico +500%", "Поиск магии +500%", "매직 아이템 발견 +500%" },
+    { "dmBuffGf", "金币掉落 +500%", "Gold Find +500%", "Hallazgo de oro +500%", "Hallazgo de oro +500%", "Поиск золота +500%", "골드 발견 +500%" },
+    { "dmBuffExp", "经验 +100%", "Experience +100%", "Experiencia +100%", "Experiencia +100%", "Опыт +100%", "경험치 +100%" },
+    { "dmBuffSpeed", "极速（跑 / 攻 / 施法 / 恢复）", "Speed (run/attack/cast/recovery)", "Velocidad (carrera/ataque/hechizo/recuperación)", "Velocidad (carrera/ataque/hechizo/recuperación)", "Скорость (бег/атака/чары/восст.)", "속도 (이동/공격/시전/회복)" },
+    { "dmBuffDamage", "超高伤害（压碎、致命）", "Huge Damage (crushing, deadly)", "Daño enorme (aplastante, mortal)", "Daño enorme (aplastante, mortal)", "Огромный урон (сокруш., смерт.)", "막대한 피해 (강타, 치명타)" },
+    { "dmBuffResist", "全抗性 +100", "All Resistances +100", "Todas las resistencias +100", "Todas las resistencias +100", "Все сопротивления +100", "모든 저항 +100" },
+    { "dmBuffSkills", "全技能 +5", "All Skills +5", "Todas las habilidades +5", "Todas las habilidades +5", "Все умения +5", "모든 기술 +5" },
 };
