@@ -300,7 +300,7 @@ struct lo_piece {
 static _Atomic int g_lo_req, g_lo_busy;
 void dm_itemgen_loadout(void) { atomic_store(&g_lo_req, 1); }
 int dm_itemgen_busy(void) { return atomic_load(&g_lo_busy); }   // dm_runeword.c 的一键合成在配装期间不动光标 | dm_runeword.c's one-tap crafting keeps off the cursor during a loadout
-enum { LO_IDLE, LO_MAKE, LO_SOCK, LO_SWITCH, LO_EQUIP, LO_BACK };
+enum { LO_IDLE, LO_MAKE, LO_SOCK, LO_SWITCH, LO_EQUIP, LO_BACK, LO_RWJOB };   // LO_RWJOB：符文之语交给一键合成镶（见 lo_rwjob） | LO_RWJOB: a runeword is socketed by one-tap crafting (see lo_rwjob)
 // 任务绑定这一局与这个角色（G、玩家 id），换局 / 换角色作废；resume = 背包满停下时的阶段，腾出空位再点接着做
 // The job is bound to this game and character (G, player id) and dropped on a change; resume = the phase it stopped in on a full inventory, continued on the next tap
 static struct { int st, i, k, nr, closed, nomerc, resume, backtry, cursor_warned; uint64_t G; uint32_t pid, base, rune[6]; } J;
@@ -483,6 +483,30 @@ static int lo_equip_merc(uint64_t G, uint64_t pl, const lo_piece_t *pc) {
     if (!ok) { lo_stop("dmLoFail", pc->what); return 0; }
     return 1;
 }
+// 符文之语改走 dm_runeword.c 的一键合成（客户端 0x19 / 0x28，真机验证过）：build 14.1 / 15.1 真机上，配装自己在服务端发 0x28，
+// 正义之手前 3 颗进孔、会成词的第 4 颗被退回光标；同一件从「装备」页生成、走一键合成能成词（用户实测）。等底材出现成词标志 0x04000000，
+// 再写底材自带词缀、去力量 / 敏捷需求、符文之语满值，然后去穿。约 30 秒没成词就停
+// Runewords now go through dm_runeword.c's one-tap crafting (client 0x19 / 0x28, verified on device): on device in builds 14.1 / 15.1, with the loadout sending 0x28 itself on the server,
+// Hand of Justice took 3 runes and the 4th, which forms the word, was returned to the cursor; the same piece created from the "Items" page and crafted by one-tap crafting formed (user test). Wait for the runeword flag 0x04000000 on the base,
+// then write the base extras, remove strength / dexterity requirements and the runeword max rolls, then equip. Stop after about 30 s without a word
+static int rw_row_key(uint64_t G, const char *key) {
+    uint64_t T = tables(G), rr = T ? rd(T + 0x1880) : 0; uint32_t rn = T ? *(uint32_t *)(uintptr_t)(T + 0x1888) : 0;
+    for (uint32_t k = 0; rr && k < rn && k < 4096; k++) if (!strncmp((const char *)(uintptr_t)(rr + (uint64_t)k * 0xe8), key, 64)) return (int)k;
+    return -1;
+}
+static int lo_rwjob(uint64_t G, uint64_t pl, const lo_piece_t *pc) {
+    if (!J.k) { int rec = rw_row_key(G, pc->rwkey); if (rec < 0) { LOG("【红】一键配装：运行时符文之语表里没有 %s", pc->rwkey); lo_stop("dmLoFail", pc->what); return 0; }
+        dm_runeword_auto(J.base, rec); J.k = 1; J.backtry = 0; LOG("一键配装：「%s」交给一键合成（底材 id %u、表行 %d）", pc->what, J.base, rec); return 0; }
+    uint64_t b = own_item(pl, J.base), d = b ? rd(b + 0x10) : 0;
+    if (!d || !(*(uint32_t *)(uintptr_t)(d + 0x18) & 0x04000000)) {
+        if (++J.backtry > 750 && !dm_runeword_busy()) { LOG("一键配装：「%s」30 秒没成词", pc->what); lo_stop("dmLoFail", pc->what); } return 0; }
+    LOG("一键配装：「%s」成词", pc->what);
+    struct lo_aff ab = { pc->what, pc->bst, pc->nbst, 0 }, a = { pc->what, pc->st, pc->nst, 0 };
+    if (pc->nbst && !apply_list(b, 0, &ab)) { lo_stop("dmLoFail", pc->what); return 0; }
+    no_req(b);
+    if (pc->nst && !apply_list(b, 1, &a)) { lo_stop("dmLoFail", pc->what); return 0; }
+    J.backtry = 0; return 1;
+}
 static void lo_tick(uint64_t G, uint64_t pl) {
     uint32_t pid = *(uint32_t *)(uintptr_t)(pl + 8);
     if (J.G && (J.G != G || J.pid != pid)) { LOG("一键配装：换局或换角色，旧任务作废（停在第 %d 件）", J.i); memset(&J, 0, sizeof J); }
@@ -497,12 +521,13 @@ static void lo_tick(uint64_t G, uint64_t pl) {
     if (*(uint32_t *)(uintptr_t)(G + 0x19050)) return;   // 原版正在分发：下一拍再说 | the original is dispatching: next tick
     if (!dm_runeword_inv_open()) { if (!J.closed++) lo_notice("dmLoClosed", NULL); return; }   // 物品栏关了就停着等，开了接着做 | inventory closed: wait, continue once it is open
     J.closed = 0;
-    if (!clear_cursor(G, pl)) { if (!J.cursor_warned++) lo_notice("dmLoCursor", NULL); return; }   // 光标没空之前什么都不做（也不切武器组、不结束） | nothing else until the cursor is empty (no weapon switch, no finishing)
+    if (J.st != LO_RWJOB && !clear_cursor(G, pl)) { if (!J.cursor_warned++) lo_notice("dmLoCursor", NULL); return; }   // 光标没空之前什么都不做（也不切武器组、不结束） | nothing else until the cursor is empty (no weapon switch, no finishing)
     J.cursor_warned = 0;
     if (J.st != LO_BACK && J.i >= NLO) J.st = LO_BACK;
     const lo_piece_t *pc = J.st == LO_BACK ? NULL : &k_lo[J.i];
     switch (J.st) {
-    case LO_MAKE: if (lo_make(G, pl, pc)) { J.k = 0; J.st = J.nr ? LO_SOCK : LO_EQUIP; } break;
+    case LO_MAKE: if (lo_make(G, pl, pc)) { J.k = 0; J.st = !J.nr ? LO_EQUIP : pc->kind == LK_RUNEWORD ? LO_RWJOB : LO_SOCK; } break;
+    case LO_RWJOB: if (lo_rwjob(G, pl, pc)) J.st = LO_EQUIP; break;
     case LO_SOCK: if (lo_sock(G, pl, pc) && J.k == J.nr) J.st = LO_EQUIP; break;
     case LO_SWITCH: if (cur_set(pl) == 1 || switch_set(G, pl)) J.st = LO_EQUIP; else lo_stop("dmLoFail", pc->what); break;
     case LO_EQUIP:   // 护身符（装备位 0）留在背包；佣兵件给佣兵；副手组的件先切过去 | charms (slot 0) stay in the inventory; mercenary pieces go to the mercenary; secondary-set pieces switch over first
