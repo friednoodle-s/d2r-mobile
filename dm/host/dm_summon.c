@@ -348,6 +348,9 @@ static void test_acts(uint64_t G, uint64_t player) {
     else if (!strncmp(a, "nolevel", 7)) { void dm_itemgen_set_nolevel(int); dm_itemgen_set_nolevel(x); }
     else if (!strncmp(a, "belt", 4)) { void dm_belt_use(int, int); dm_belt_use(x, y); }
     else if (!strncmp(a, "xs", 2)) dm_xskill_set(x, y);
+    else if (!strncmp(a, "auto", 4)) { void dm_auto_set(int), dm_auto_set_skill(int, int), dm_auto_set_pick(int);   // auto:开关:主攻:范围[:拾取] | auto:on:main:area[:pick]
+        char *c2 = c ? strchr(c + 1, ':') : NULL, *c3 = c2 ? strchr(c2 + 1, ':') : NULL, *c4 = c3 ? strchr(c3 + 1, ':') : NULL;
+        if (c3) dm_auto_set_skill(1, atoi(c3 + 1)); if (c2) dm_auto_set_skill(0, y); if (c4) dm_auto_set_pick(atoi(c4 + 1)); dm_auto_set(x); }
     else if (!strncmp(a, "cast", 4)) {   // cast:技能号:dx:dy——照免费回城的施放法（dm_freetp.c）在玩家格 + (dx, dy) 放一次 | cast:skill:dx:dy -- cast once at the player cell + (dx, dy), the way the free town portal does (dm_freetp.c)
         uint64_t node = xs_node(player, x), sl = *(uint64_t *)(uintptr_t)(player + 0x100), pp = rd(player + 0x38); int px = pp ? *(uint16_t *)(uintptr_t)(pp + 2) : 0, py = pp ? *(uint16_t *)(uintptr_t)(pp + 6) : 0;
         char *c2 = c ? strchr(c + 1, ':') : NULL, *c3 = c2 ? strchr(c2 + 1, ':') : NULL; int dx = y, dy = c3 ? atoi(c3 + 1) : 0; uint32_t pm = *(uint32_t *)(uintptr_t)(player + 0xc); int r = -1;
@@ -371,7 +374,8 @@ void dm_summon_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
     test_acts(G, player);
     { static int last = -1; static uint64_t lp; int w = atomic_load(&g_xs); if (w != last || player != lp || *(uint32_t *)(uintptr_t)(G + 0x170) % 25 == 0) { if (w || last > 0) xs_apply(B, player, 1); last = w; lp = player; } }
     uint64_t req = atomic_exchange(&g_req_summon, UINT64_MAX); if (req != UINT64_MAX) summon(G, player, (int)(req >> 32), (int)(uint32_t)req);
-    { void dm_itemgen_tick(uint64_t, uint64_t, uint8_t *); dm_itemgen_tick(G, player, main_base); }   // 刷装备（dm_itemgen.c） | item spawner (dm_itemgen.c)
+    { void dm_itemgen_tick(uint64_t, uint64_t, uint8_t *); dm_itemgen_tick(G, player, main_base); }
+    { void dm_autoplay_tick(uint64_t, uint64_t, uint8_t *); dm_autoplay_tick(G, player, main_base); }   // 自动清图（dm_autoplay.c） | auto map clear (dm_autoplay.c)   // 刷装备（dm_itemgen.c） | item spawner (dm_itemgen.c)
     if (atomic_exchange(&g_req_clear, 0)) clear_all(G, player);
     req = atomic_exchange(&g_req_cheat, UINT64_MAX); if (req != UINT64_MAX) cheat(player, (int32_t)(uint32_t)(req >> 32), (int32_t)(uint32_t)req);
     uint32_t m = *(uint32_t *)(uintptr_t)(player + 0xc);

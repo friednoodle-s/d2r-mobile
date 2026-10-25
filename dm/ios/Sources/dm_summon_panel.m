@@ -5,10 +5,11 @@
 #import <UIKit/UIKit.h>
 #include "../../host/dm_summon.h"
 #include "../../host/dm_itemgen.h"
+#include "../../host/dm_autoplay.h"
 #include "dm_i18n.h"
 
 // 面板右下角的版本号：每次交给玩家测试的构建都改这里，截图里一眼看出装的是哪一版 | version shown at the panel's bottom-right: bumped for every build handed out for testing, so a screenshot shows which one is installed
-#define DM_SUMMON_UI_VER "summon console 20"
+#define DM_SUMMON_UI_VER "summon console 21"
 #define DM_NOLEVEL_PREF @"dmItemNoLevel"   // 免等级开关记在 NSUserDefaults（iPad 上改不了 txt） | the no-level switch is kept in NSUserDefaults (txt files cannot be edited on the iPad)
 
 @interface DmSummonPanel : NSObject <UITableViewDataSource, UITableViewDelegate, UITextFieldDelegate>
@@ -25,6 +26,8 @@
 @property (nonatomic) BOOL moved;   // 玩家拖过按钮：之后不再自动放回左上角 | the player has dragged the button: no longer snapped back to the top-left
 // 「装备」页：种类（暗金 / 套装 / 符文之语）+ 搜索框 + 免等级开关 + 清单，点一行生成 | "Items" page: kind (unique / set / runeword) + search field + no-level switch + list; tapping a row creates it
 @property (nonatomic, strong) UIView *pageItems;
+@property (nonatomic, strong) UIScrollView *pageAuto;   // 自动清图页（dm_autoplay.c） | auto map clear page (dm_autoplay.c)
+@property (nonatomic, strong) UILabel *autoStatus;
 @property (nonatomic, strong) UISegmentedControl *kindSeg;
 @property (nonatomic, strong) UITextField *search;
 @property (nonatomic, strong) UITableView *itemTable;
@@ -72,7 +75,7 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     _panel.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.94]; _panel.layer.cornerRadius = 12;
     _panel.layer.borderWidth = 1; _panel.layer.borderColor = [UIColor colorWithRed:0.62 green:0.5 blue:0.3 alpha:1].CGColor;
     [host addSubview:_panel];
-    _tabs = [[UISegmentedControl alloc] initWithItems:@[@(dm_ui("dmSumTabSummon")), @(dm_ui("dmSumTabCheat")), @(dm_ui("dmSumTabItems"))]]; _tabs.selectedSegmentIndex = 0;
+    _tabs = [[UISegmentedControl alloc] initWithItems:@[@(dm_ui("dmSumTabSummon")), @(dm_ui("dmSumTabCheat")), @(dm_ui("dmSumTabItems")), @(dm_ui("dmSumTabAuto"))]]; _tabs.selectedSegmentIndex = 0;
     // 系统缺省样式在深色面板上没选中那页的字几乎看不见（真机截图：「修改」页签没人发现）：底色、选中色、字色都显式给
     // With the system default style, the unselected segment's text is almost invisible on the dark panel (device screenshot: nobody found the "Cheats" tab): background, selected tint and text colors are all set explicitly
     style_seg(_tabs);
@@ -114,6 +117,19 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
         [s addTarget:self action:@selector(toggleXs:) forControlEvents:UIControlEventValueChanged]; [_pageCheat addSubview:s];
     }
 
+    _pageAuto = [UIScrollView new]; _pageAuto.hidden = YES; _pageAuto.indicatorStyle = UIScrollViewIndicatorStyleWhite; [_panel addSubview:_pageAuto];
+    { NSUserDefaults *ud = NSUserDefaults.standardUserDefaults; [ud registerDefaults:@{ @"dm.auto.main": @0, @"dm.auto.aoe": @-1, @"dm.auto.pick": @7 }];
+      dm_auto_set_skill(0, (int)[ud integerForKey:@"dm.auto.main"]); dm_auto_set_skill(1, (int)[ud integerForKey:@"dm.auto.aoe"]); dm_auto_set_pick((int)[ud integerForKey:@"dm.auto.pick"]);
+      UILabel *l = mk_label(@(dm_ui("dmAutoOn")), 16); l.tag = 2001; [_pageAuto addSubview:l];
+      UISwitch *on = [UISwitch new]; on.tag = 2002; on.on = dm_auto_on(); [on addTarget:self action:@selector(autoToggle:) forControlEvents:UIControlEventValueChanged]; [_pageAuto addSubview:on];
+      UIButton *m = mk_button(@"", self, @selector(autoMain)); m.tag = 2003; [_pageAuto addSubview:m];
+      UIButton *a = mk_button(@"", self, @selector(autoAoe)); a.tag = 2004; [_pageAuto addSubview:a];
+      const char *pk[3] = { "dmAutoPickUnique", "dmAutoPickRare", "dmAutoPickRune" };
+      for (int i = 0; i < 3; i++) { UILabel *pl = mk_label(@(dm_ui(pk[i])), 15); pl.tag = 2010 + i; [_pageAuto addSubview:pl];
+          UISwitch *ps = [UISwitch new]; ps.tag = 2020 + i; ps.on = dm_auto_pick() >> i & 1; [ps addTarget:self action:@selector(autoPick:) forControlEvents:UIControlEventValueChanged]; [_pageAuto addSubview:ps]; }
+      UILabel *h = mk_label(@(dm_ui("dmAutoHint")), 12); h.tag = 2030; h.numberOfLines = 0; h.textColor = [UIColor colorWithWhite:0.7 alpha:1]; [_pageAuto addSubview:h];
+      _autoStatus = mk_label(@"", 14); _autoStatus.numberOfLines = 2; [_pageAuto addSubview:_autoStatus]; [self autoLabels]; }
+
     _pageItems = [UIView new]; _pageItems.hidden = YES; [_panel addSubview:_pageItems];
     _kindSeg = [[UISegmentedControl alloc] initWithItems:@[@(dm_ui("dmItemUnique")), @(dm_ui("dmItemSet")), @(dm_ui("dmItemRw"))]];
     style_seg(_kindSeg); _kindSeg.selectedSegmentIndex = DM_ITEM_UNIQUE; [_kindSeg addTarget:self action:@selector(refilter) forControlEvents:UIControlEventValueChanged]; [_pageItems addSubview:_kindSeg];
@@ -142,7 +158,7 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     _tabs.frame = CGRectMake(pad, pad, w - 2 * pad - 80, 34);
     [_panel viewWithTag:900].frame = CGRectMake(w - pad - 72, pad, 72, 34);
     [_panel viewWithTag:905].frame = CGRectMake(w - pad - 160, h - 18, 160, 14);
-    CGRect page = CGRectMake(pad, pad + 44, w - 2 * pad, h - 2 * pad - 44 - 8); _pageSummon.frame = page; _pageCheat.frame = page; _pageItems.frame = page;   // 底下留出版本号那一行 | leave the version line free at the bottom
+    CGRect page = CGRectMake(pad, pad + 44, w - 2 * pad, h - 2 * pad - 44 - 8); _pageSummon.frame = page; _pageCheat.frame = page; _pageItems.frame = page; _pageAuto.frame = page;   // 底下留出版本号那一行 | leave the version line free at the bottom
     CGFloat pw = page.size.width, bw = (pw - 2 * 8) / 3, bh = 44;
     for (int i = 0; i < DM_SUM_NBOSS; i++) _bossButtons[i].frame = CGRectMake((i % 3) * (bw + 8), (i / 3) * (bh + 8), bw, bh);
     CGFloat y = 2 * (bh + 8) + 4;
@@ -157,6 +173,10 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
       for (int i = 0; i < DM_NXSKILL; i++) { CGFloat yy = y0 + i * 42; [_pageCheat viewWithTag:1100 + i].frame = CGRectMake(0, yy, pw - 70, 36); [_pageCheat viewWithTag:1200 + i].frame = CGRectMake(pw - 56, yy + 2, 51, 31); }
       _pageCheat.contentSize = CGSizeMake(pw, y0 + DM_NXSKILL * 42); }
     _kindSeg.frame = CGRectMake(0, 0, pw, 32); _search.frame = CGRectMake(0, 40, pw, 36);
+    { CGFloat ay = 0; [_pageAuto viewWithTag:2001].frame = CGRectMake(0, ay, pw - 70, 36); [_pageAuto viewWithTag:2002].frame = CGRectMake(pw - 56, ay + 2, 51, 31); ay += 44;
+      [_pageAuto viewWithTag:2003].frame = CGRectMake(0, ay, pw, 40); ay += 48; [_pageAuto viewWithTag:2004].frame = CGRectMake(0, ay, pw, 40); ay += 48;
+      for (int i = 0; i < 3; i++) { [_pageAuto viewWithTag:2010 + i].frame = CGRectMake(0, ay, pw - 70, 36); [_pageAuto viewWithTag:2020 + i].frame = CGRectMake(pw - 56, ay + 2, 51, 31); ay += 42; }
+      _autoStatus.frame = CGRectMake(0, ay, pw, 40); ay += 44; [_pageAuto viewWithTag:2030].frame = CGRectMake(0, ay, pw, 64); ay += 70; _pageAuto.contentSize = CGSizeMake(pw, ay); }
     [_pageItems viewWithTag:970].frame = CGRectMake(0, 84, pw - 70, 32); [_pageItems viewWithTag:971].frame = CGRectMake(pw - 56, 84, 51, 31);
     [_pageItems viewWithTag:973].frame = CGRectMake(0, 120, pw, 40);
     [_pageItems viewWithTag:972].frame = CGRectMake(0, 166, pw, 18);
@@ -169,7 +189,17 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
         _timer = [NSTimer scheduledTimerWithTimeInterval:0.5 target:self selector:@selector(tick) userInfo:nil repeats:YES]; }
     else { [_timer invalidate]; _timer = nil; [_search resignFirstResponder]; }
 }
-- (void)tick { _aliveLabel.text = [NSString stringWithFormat:@(dm_ui("dmSumAlive")), dm_summon_alive()]; }
+- (void)tick { _aliveLabel.text = [NSString stringWithFormat:@(dm_ui("dmSumAlive")), dm_summon_alive()];
+    int r, n, k, st; dm_auto_status(&r, &n, &k, &st); _autoStatus.text = st ? [NSString stringWithFormat:@(dm_ui("dmAutoStatus")), r, n, k] : @(dm_ui("dmAutoIdle"));
+    ((UISwitch *)[_pageAuto viewWithTag:2002]).on = dm_auto_on(); }
+- (void)autoLabels {
+    int m = dm_auto_skill(0), a = dm_auto_skill(1);
+    [(UIButton *)[_pageAuto viewWithTag:2003] setTitle:[NSString stringWithFormat:@(dm_ui("dmAutoMain")), @(dm_ui(dm_auto_skill_key(m)))] forState:UIControlStateNormal];
+    [(UIButton *)[_pageAuto viewWithTag:2004] setTitle:[NSString stringWithFormat:@(dm_ui("dmAutoAoe")), @(a < 0 ? dm_ui("dmAutoNone") : dm_ui(dm_auto_skill_key(a)))] forState:UIControlStateNormal]; }
+- (void)autoToggle:(UISwitch *)s { dm_auto_set(s.on); }
+- (void)autoMain { int i = (dm_auto_skill(0) + 1) % dm_auto_skill_count(); dm_auto_set_skill(0, i); [NSUserDefaults.standardUserDefaults setInteger:i forKey:@"dm.auto.main"]; [self autoLabels]; }
+- (void)autoAoe { int i = dm_auto_skill(1) + 1; if (i >= dm_auto_skill_count()) i = -1; dm_auto_set_skill(1, i); [NSUserDefaults.standardUserDefaults setInteger:i forKey:@"dm.auto.aoe"]; [self autoLabels]; }
+- (void)autoPick:(UISwitch *)s { int b = 1 << (s.tag - 2020), m = s.on ? dm_auto_pick() | b : dm_auto_pick() & ~b; dm_auto_set_pick(m); [NSUserDefaults.standardUserDefaults setInteger:m forKey:@"dm.auto.pick"]; }
 // 按钮缺省在左上角（让开刘海 / 圆角的安全区再留 8 点）；拖过以后只保证不出界
 // The button defaults to the top-left (inside the safe area for the notch / rounded corners, plus 8 points); once dragged it is only kept on screen
 - (void)placeFab:(CGRect)b {
@@ -184,7 +214,7 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
 }
 - (void)bindChanged { dm_summon_set_bind_mode((int)_bindSeg.selectedSegmentIndex); }
 - (void)tabChanged {
-    _pageSummon.hidden = _tabs.selectedSegmentIndex != 0; _pageCheat.hidden = _tabs.selectedSegmentIndex != 1; _pageItems.hidden = _tabs.selectedSegmentIndex != 2;
+    _pageSummon.hidden = _tabs.selectedSegmentIndex != 0; _pageCheat.hidden = _tabs.selectedSegmentIndex != 1; _pageItems.hidden = _tabs.selectedSegmentIndex != 2; _pageAuto.hidden = _tabs.selectedSegmentIndex != 3;
     if (_pageItems.hidden) [_search resignFirstResponder];
     [self layoutIn:_panel.superview.bounds];   // 装备页面板高度不同 | the items page has a different panel height
 }

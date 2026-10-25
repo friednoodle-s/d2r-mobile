@@ -54,6 +54,7 @@ SRC=\
 	dm_pouch.c \
 	dm_cloudmerge.c \
 	dm_itemgen.c \
+	dm_autoplay.c \
 	dm_rift.c \
 	dm_rift_ui.c \
 	dm_runeword.c \

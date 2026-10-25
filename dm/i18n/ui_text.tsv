@@ -534,3 +534,44 @@ dmXsCyclone	飓风装甲	Cyclone Armor	Armadura de ciclón		Броня цикл�
 dmXsBos	速度爆发	Burst of Speed	Ráfaga de velocidad		Всплеск скорости	폭발적 속도	附加技能（dm_summon.c / dm_summon_panel.m）
 dmXsFade	闪避	Fade	Desvanecimiento		Угасание	희미해지기	附加技能（dm_summon.c / dm_summon_panel.m）
 dmXsHolyShield	神圣之盾	Holy Shield	Escudo sagrado		Святой щит	신성한 방패	附加技能（dm_summon.c / dm_summon_panel.m）
+dmSumTabAuto	自动	Auto	Auto		Авто	자동	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAutoOn	自动清图（当前地图）	Auto clear (this map)	Limpieza automática (este mapa)		Автозачистка (эта карта)	자동 정리 (현재 지도)	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAutoMain	主攻技能：%@	Main skill: %@	Habilidad principal: %@		Основное умение: %@	주 기술: %@	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAutoAoe	范围技能：%@	Area skill: %@	Habilidad de área: %@		Умение по площади: %@	광역 기술: %@	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAutoNone	不用	None	Ninguna		Нет	사용 안 함	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAutoPickUnique	捡暗金 / 套装	Pick up uniques / sets	Recoger únicos / de conjunto		Подбирать уникальные / комплекты	고유 / 세트 줍기	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAutoPickRare	捡稀有	Pick up rares	Recoger raros		Подбирать редкие	희귀 줍기	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAutoPickRune	捡符文	Pick up runes	Recoger runas		Подбирать руны	룬 줍기	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAutoHint	在野外打开：自动找怪、打怪、捡东西，去过本图全部房间后停下。点技能按钮切换；别的职业的技能会自动挂上（等级 20）。换地图、死亡或生命低于 25%（没开无敌）时自动停。	Turn on outside town: finds, fights and loots by itself and stops after visiting every room of the map. Tap a skill button to cycle; other classes' skills are added automatically (level 20). Stops on a map change, death, or life below 25% (without god mode).	Actívalo fuera del pueblo: busca, lucha y recoge solo, y se detiene tras recorrer todas las salas del mapa. Toca un botón de habilidad para cambiarla; las de otras clases se añaden solas (nivel 20). Se detiene al cambiar de mapa, al morir o con menos de una cuarta parte de la vida (sin invencibilidad).		Включайте вне города: сам ищет врагов, сражается и собирает добычу, останавливается, обойдя все комнаты карты. Нажмите кнопку умения, чтобы сменить его; умения других классов добавляются сами (ур. 20). Останавливается при смене карты, смерти или здоровье ниже 25% (без бессмертия).	마을 밖에서 켜세요: 스스로 몬스터를 찾아 싸우고 아이템을 줍고, 지도의 모든 방을 돌면 멈춥니다. 기술 버튼을 눌러 바꿉니다. 다른 직업 기술은 자동으로 추가됩니다(레벨 20). 지도 이동, 사망, 생명력 25% 미만(무적 꺼짐)이면 멈춥니다.	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAutoStatus	清图中：房间 %d / %d，击杀 %d	Clearing: room %d / %d, kills %d	Limpiando: sala %d / %d, muertes %d		Зачистка: комната %d / %d, убито %d	정리 중: 방 %d / %d, 처치 %d	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAutoIdle	未运行	Not running	Detenido		Не запущено	실행 안 함	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAutoTown	自动清图：城里不能用，出城后再开	Auto clear: not in town; turn it on outside	Limpieza automática: no en el pueblo; actívala fuera		Автозачистка: не в городе, включите за его пределами	자동 정리: 마을에서는 불가, 밖에서 켜세요	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAutoDead	自动清图：角色死亡，已停	Auto clear stopped: character died	Limpieza automática detenida: el personaje murió		Автозачистка остановлена: персонаж погиб	자동 정리 중지: 캐릭터 사망	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAutoLow	自动清图：生命低于 25%，已停	Auto clear stopped: life below 25%	Limpieza automática detenida: vida por debajo del 25%		Автозачистка остановлена: здоровье ниже 25%	자동 정리 중지: 생명력 25% 미만	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAutoLeft	自动清图：换了地图，已停	Auto clear stopped: map changed	Limpieza automática detenida: cambió el mapa		Автозачистка остановлена: смена карты	자동 정리 중지: 지도 변경	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAutoNoSkill	自动清图：选的技能用不了（本职业技能要先学），已停	Auto clear stopped: the chosen skill can't be used (learn your own class's skill first)	Limpieza automática detenida: la habilidad elegida no se puede usar (aprende primero la de tu clase)		Автозачистка остановлена: выбранное умение недоступно (сначала изучите умение своего класса)	자동 정리 중지: 선택한 기술 사용 불가 (자기 직업 기술은 먼저 배우세요)	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAutoDone	自动清图：本图清完	Auto clear: map cleared	Limpieza automática: mapa despejado		Автозачистка: карта зачищена	자동 정리: 지도 정리 완료	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsRight	当前右键技能	Current right skill	Habilidad derecha actual		Текущее правое умение	현재 오른쪽 기술	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsHammer	祝福之锤	Blessed Hammer	Martillo bendito		Благословенный молот	축복받은 망치	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsFoh	天堂之拳	Fist of the Heavens	Puño de los cielos		Кулак небес	천상의 주먹	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsZeal	狂热	Zeal	Fervor		Рвение	열성	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsSmite	重击	Smite	Castigar		Кара	강타	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsHolyBolt	圣光弹	Holy Bolt	Rayo sagrado		Святая стрела	신성한 화살	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsFrozenOrb	冰封球	Frozen Orb	Orbe congelado		Ледяная сфера	얼음 구체	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsBlizzard	暴风雪	Blizzard	Ventisca		Буран	눈보라	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsMeteor	陨石	Meteor	Meteoro		Метеор	유성	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsChainLight	连锁闪电	Chain Lightning	Relámpago en cadena		Цепная молния	연쇄 번개	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsNova	新星	Nova	Nova		Нова	신성	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsBoneSpear	白骨之矛	Bone Spear	Lanza de hueso		Костяное копьё	뼈 창	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsCorpseExp	尸体爆炸	Corpse Explosion	Explosión de cadáver		Взрыв трупа	시체 폭발	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsWhirlwind	旋风	Whirlwind	Torbellino		Вихрь	소용돌이	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsBerserk	狂战士	Berserk	Furia		Берсерк	광폭	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsMultiShot	多重射击	Multiple Shot	Disparo múltiple		Множественный выстрел	다중 사격	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsStrafe	扫射	Strafe	Ametrallar		Обстрел	난사	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsLightFury	闪电之怒	Lightning Fury	Furia de relámpagos		Ярость молний	번개 격노	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsChargedStrike	充能打击	Charged Strike	Golpe cargado		Заряженный удар	충전 일격	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsTornado	龙卷风	Tornado	Tornado		Торнадо	토네이도	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsHurricane	飓风	Hurricane	Huracán		Ураган	허리케인	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsFissure	地裂	Fissure	Fisura		Трещина	균열	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsLightSentry	闪电守卫	Lightning Sentry	Centinela de relámpagos		Молниевый страж	번개 파수병	自动清图（dm_autoplay.c / dm_summon_panel.m）
+dmAsPhoenix	凤凰打击	Phoenix Strike	Golpe de fénix		Удар феникса	불사조 일격	自动清图（dm_autoplay.c / dm_summon_panel.m）
