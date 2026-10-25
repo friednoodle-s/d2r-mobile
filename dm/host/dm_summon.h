@@ -20,6 +20,13 @@ enum { DM_BUFF_MF, DM_BUFF_GF, DM_BUFF_EXP, DM_BUFF_SPEED, DM_BUFF_DAMAGE, DM_BU
 void dm_cheat_set_buff(int buff, int on);
 int dm_cheat_buff(int buff);
 const char *dm_cheat_buff_key(int buff);       // 开关名字的串表键 | string table key of the toggle name
+// 附加技能：别的职业的常用技能（传送、战斗命令…）进局挂到玩家技能链上，玩家在原版选技能界面绑到技能栏用；不进存档，每局重挂
+// Extra skills: common skills of other classes (Teleport, Battle Orders...) are attached to the player's skill chain in each run, the player binds them on the original skill selection screen; not saved, attached again every run
+enum { DM_NXSKILL = 12 };
+void dm_xskill_set(int i, int on);
+int dm_xskill(int i);
+const char *dm_xskill_key(int i);              // 名字的串表键 | string table key of the name
+void dm_xskill_client_step(uint8_t *mb, uint64_t pl);   // 游戏主线程每帧（dm_actions.c）：客户端玩家也挂上（选技能界面看的是客户端） | game main thread every frame (dm_actions.c): attach to the client player too (the selection screen reads the client)
 int dm_summon_alive(void);                     // 界面显示：现存的召唤首领数（上一拍数的） | for the UI: number of summoned bosses alive (counted on the previous tick)
 void dm_summon_set_bind_mode(int mode);        // 绑定类型：0 骷髅复生、1 束缚恶魔、2 女武神、3 不转化（排查随从猝死用） | bind type: 0 Raise Skeleton, 1 Bind Demon, 2 Valkyrie, 3 do not bind (for chasing sudden minion deaths)
 int dm_summon_bind_mode(void);

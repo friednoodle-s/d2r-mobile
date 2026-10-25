@@ -8,7 +8,7 @@
 #include "dm_i18n.h"
 
 // 面板右下角的版本号：每次交给玩家测试的构建都改这里，截图里一眼看出装的是哪一版 | version shown at the panel's bottom-right: bumped for every build handed out for testing, so a screenshot shows which one is installed
-#define DM_SUMMON_UI_VER "summon console 19"
+#define DM_SUMMON_UI_VER "summon console 20"
 #define DM_NOLEVEL_PREF @"dmItemNoLevel"   // 免等级开关记在 NSUserDefaults（iPad 上改不了 txt） | the no-level switch is kept in NSUserDefaults (txt files cannot be edited on the iPad)
 
 @interface DmSummonPanel : NSObject <UITableViewDataSource, UITableViewDelegate, UITextFieldDelegate>
@@ -107,6 +107,13 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
         [s addTarget:self action:@selector(toggleSwitch:) forControlEvents:UIControlEventValueChanged]; [_pageCheat addSubview:s];
     }
 
+    UILabel *xh = mk_label(@(dm_ui("dmXsHint")), 12); xh.tag = 1099; xh.numberOfLines = 0; xh.textColor = [UIColor colorWithWhite:0.7 alpha:1]; [_pageCheat addSubview:xh];
+    for (int i = 0; i < DM_NXSKILL; i++) {   // 附加技能开关（dm_summon.c k_xs），标签 1100+、开关 1200+ | extra skill switches (dm_summon.c k_xs), labels 1100+, switches 1200+
+        UILabel *l = mk_label(@(dm_ui(dm_xskill_key(i))), 15); l.tag = 1100 + i; [_pageCheat addSubview:l];
+        UISwitch *s = [UISwitch new]; s.tag = 1200 + i; s.on = [NSUserDefaults.standardUserDefaults boolForKey:[NSString stringWithFormat:@"dm.xs.%d", i]]; dm_xskill_set(i, s.on);
+        [s addTarget:self action:@selector(toggleXs:) forControlEvents:UIControlEventValueChanged]; [_pageCheat addSubview:s];
+    }
+
     _pageItems = [UIView new]; _pageItems.hidden = YES; [_panel addSubview:_pageItems];
     _kindSeg = [[UISegmentedControl alloc] initWithItems:@[@(dm_ui("dmItemUnique")), @(dm_ui("dmItemSet")), @(dm_ui("dmItemRw"))]];
     style_seg(_kindSeg); _kindSeg.selectedSegmentIndex = DM_ITEM_UNIQUE; [_kindSeg addTarget:self action:@selector(refilter) forControlEvents:UIControlEventValueChanged]; [_pageItems addSubview:_kindSeg];
@@ -146,7 +153,9 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     int k = 0; for (UIView *v in _pageCheat.subviews) if ([v isKindOfClass:UIButton.class]) { v.frame = CGRectMake((k % 3) * (bw + 8), (k / 3) * (bh + 8), bw, bh); k++; }
     CGFloat top = ((k + 2) / 3) * (bh + 8) + 6;   // 按钮占的行数（每行 3 个） | rows taken by the buttons (3 per row)
     for (int i = 0; i < 2 + DM_NBUFF; i++) { CGFloat yy = top + i * 42; [_pageCheat viewWithTag:950 + i].frame = CGRectMake(0, yy, pw - 70, 36); [_pageCheat viewWithTag:960 + i].frame = CGRectMake(pw - 56, yy + 2, 51, 31); }
-    _pageCheat.contentSize = CGSizeMake(pw, top + (2 + DM_NBUFF) * 42);
+    { CGFloat y0 = top + (2 + DM_NBUFF) * 42 + 8; [_pageCheat viewWithTag:1099].frame = CGRectMake(0, y0, pw, 34); y0 += 40;
+      for (int i = 0; i < DM_NXSKILL; i++) { CGFloat yy = y0 + i * 42; [_pageCheat viewWithTag:1100 + i].frame = CGRectMake(0, yy, pw - 70, 36); [_pageCheat viewWithTag:1200 + i].frame = CGRectMake(pw - 56, yy + 2, 51, 31); }
+      _pageCheat.contentSize = CGSizeMake(pw, y0 + DM_NXSKILL * 42); }
     _kindSeg.frame = CGRectMake(0, 0, pw, 32); _search.frame = CGRectMake(0, 40, pw, 36);
     [_pageItems viewWithTag:970].frame = CGRectMake(0, 84, pw - 70, 32); [_pageItems viewWithTag:971].frame = CGRectMake(pw - 56, 84, 51, 31);
     [_pageItems viewWithTag:973].frame = CGRectMake(0, 120, pw, 40);
@@ -210,6 +219,7 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
 - (void)summon { dm_summon_request(_boss, _count); }
 - (void)clearAll { dm_summon_clear(); }
 - (void)cheat:(UIButton *)b { dm_cheat_request((int)(b.tag / 1000), (int)(b.tag % 1000)); }
+- (void)toggleXs:(UISwitch *)s { int i = (int)s.tag - 1200; dm_xskill_set(i, s.on); [NSUserDefaults.standardUserDefaults setBool:s.on forKey:[NSString stringWithFormat:@"dm.xs.%d", i]]; }
 - (void)toggleSwitch:(UISwitch *)s { if (s.tag == 960) dm_cheat_set_god(s.on); else if (s.tag == 961) dm_cheat_set_inf_mana(s.on); else dm_cheat_set_buff((int)s.tag - 962, s.on); }
 @end
 

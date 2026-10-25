@@ -102,6 +102,40 @@ static const struct { const char *key; int n; int16_t st[4], v[4]; } k_buff[DM_N
 void dm_cheat_set_buff(int b, int on) { if (b < 0 || b >= DM_NBUFF) return; if (on) atomic_fetch_or(&g_buffs, 1 << b); else atomic_fetch_and(&g_buffs, ~(1 << b)); }
 int dm_cheat_buff(int b) { return b >= 0 && b < DM_NBUFF && (atomic_load(&g_buffs) >> b & 1); }
 const char *dm_cheat_buff_key(int b) { return b >= 0 && b < DM_NBUFF ? k_buff[b].key : ""; }
+// 附加技能表：技能号（原版 skills.txt 行号）、所属职业（0 亚马逊 1 法师 2 死灵 3 圣骑 4 野蛮人 5 德鲁伊 6 刺客 7 术士；同职业不挂，免得进存档成白送的本职技能）
+// Extra skill table: skill id (original skills.txt row), owning class (0 Amazon 1 Sorceress 2 Necromancer 3 Paladin 4 Barbarian 5 Druid 6 Assassin 7 Warlock; not attached to the same class, so it never lands in the save as a free class skill)
+static const struct { const char *key; int16_t sk; int8_t cls; } k_xs[DM_NXSKILL] = {
+    { "dmXsTeleport", 54, 1 }, { "dmXsBo", 149, 4 }, { "dmXsBc", 155, 4 }, { "dmXsShout", 138, 4 }, { "dmXsEnergyShield", 58, 1 }, { "dmXsFrozenArmor", 40, 1 },
+    { "dmXsEnchant", 52, 1 }, { "dmXsOakSage", 226, 5 }, { "dmXsCyclone", 235, 5 }, { "dmXsBos", 258, 6 }, { "dmXsFade", 267, 6 }, { "dmXsHolyShield", 117, 3 },
+};
+enum { XS_LEVEL = 20 };   // 附加等级：属性 97（物品给的非本职技能等级，不进存档）写 20 | extra level: stat 97 (non-class skill levels from items, not saved) set to 20
+static _Atomic int g_xs;
+void dm_xskill_set(int i, int on) { if (i < 0 || i >= DM_NXSKILL) return; if (on) atomic_fetch_or(&g_xs, 1 << i); else atomic_fetch_and(&g_xs, ~(1 << i)); }
+int dm_xskill(int i) { return i >= 0 && i < DM_NXSKILL && (atomic_load(&g_xs) >> i & 1); }
+const char *dm_xskill_key(int i) { return i >= 0 && i < DM_NXSKILL ? k_xs[i].key : ""; }
+// 这个单位的数据版本里这个技能可用（技能表行 +0x25 第 2 位，同 dm_freetp.c）| the skill is available in this unit's data version (bit 2 of skill row +0x25, as dm_freetp.c)
+static int xs_avail(uint8_t *mb, uint64_t u, int sk) {
+    uint8_t ver = *(uint8_t *)(uintptr_t)(u + 0x1bd); if (ver < 1 || ver > 3) return 0;
+    uint64_t T = *(uint64_t *)(uintptr_t)(mb + 0x2d64a18 + (uint64_t)ver * 16), arr = T ? *(uint64_t *)(uintptr_t)(T + 0x11e8) : 0, cnt = T ? *(uint64_t *)(uintptr_t)(T + 0x11f0) : 0;
+    return arr && (uint64_t)sk < cnt && (*(uint8_t *)(uintptr_t)(arr + (uint64_t)sk * 0x2ec + 0x25) & 4);
+}
+static uint64_t xs_node(uint64_t u, int sk) {   // 技能链里找这个技能的节点 | find this skill's node in the skill chain
+    uint64_t sl = *(uint64_t *)(uintptr_t)(u + 0x100); for (uint64_t n = sl ? *(uint64_t *)(uintptr_t)sl : 0, k = 0; n && k < 512; n = *(uint64_t *)(uintptr_t)(n + 8), k++) { uint64_t rec = *(uint64_t *)(uintptr_t)n; if (rec && *(int16_t *)(uintptr_t)rec == sk) return n; }
+    return 0;
+}
+// 挂上开着的技能、写附加等级；关掉的把附加等级写回 0（节点本局留着，下局不再挂）。srv = 服务端玩家（另记日志）
+// Attach the enabled skills and write the extra level; disabled ones get the extra level written back to 0 (the node stays this run, not attached next run). srv = server player (logged separately)
+static void xs_apply(uint8_t *mb, uint64_t u, int srv) {
+    static int was[2]; int want = atomic_load(&g_xs), cls = (int)*(uint32_t *)(uintptr_t)(u + 4);
+    for (int i = 0; i < DM_NXSKILL; i++) { int on = want >> i & 1, sk = k_xs[i].sk; if (k_xs[i].cls == cls || !xs_avail(mb, u, sk)) continue;
+        int (*get)(uint64_t, int, int) = (int (*)(uint64_t, int, int))(mb + 0x5b9290);
+        if (on && !xs_node(u, sk)) { uint64_t nd = ((uint64_t (*)(uint64_t, int))(mb + 0x7bf010))(u, sk); LOG("附加技能：%s玩家挂上技能 %d → %s", srv ? "服务端" : "客户端", sk, nd ? "成" : "【红】失败"); }
+        int lv = on ? XS_LEVEL : 0; uint64_t sl = *(uint64_t *)(uintptr_t)(u + 0x88);
+        if ((on || (was[srv] >> i & 1)) && sl) { int cur = 0; (void)get; const uint32_t *a = (const uint32_t *)(uintptr_t)*(uint64_t *)(uintptr_t)(sl + 0x30); uint64_t n = *(uint64_t *)(uintptr_t)(sl + 0x38);
+            for (uint64_t k = 0; a && k < n && k < 512; k++) if ((a[2 * k] >> 16) == 97 && (a[2 * k] & 0xffff) == (uint32_t)sk) cur = (int)a[2 * k + 1];
+            if (cur != lv) ((void (*)(uint64_t, int, int, int))(mb + 0x5bc1f0))(u, 97, lv, sk); } }
+    was[srv] = want;
+}
 int dm_summon_owns(uint32_t id) { for (int i = 0; i < g_nids; i++) if (g_ids[i] == id) return 1; return 0; }   // 服务端线程调（刷怪积分牌） | called from the server thread (kill board)
 void dm_summon_set_bind_mode(int m) { atomic_store(&g_bindmode, m < 0 || m > 3 ? 0 : m); }
 int dm_summon_bind_mode(void) { return atomic_load(&g_bindmode); }
@@ -313,6 +347,14 @@ static void test_acts(uint64_t G, uint64_t player) {
     else if (!strncmp(a, "loadout", 7)) { void dm_itemgen_loadout(void); dm_itemgen_loadout(); }
     else if (!strncmp(a, "nolevel", 7)) { void dm_itemgen_set_nolevel(int); dm_itemgen_set_nolevel(x); }
     else if (!strncmp(a, "belt", 4)) { void dm_belt_use(int, int); dm_belt_use(x, y); }
+    else if (!strncmp(a, "xs", 2)) dm_xskill_set(x, y);
+    else if (!strncmp(a, "cast", 4)) {   // cast:技能号:dx:dy——照免费回城的施放法（dm_freetp.c）在玩家格 + (dx, dy) 放一次 | cast:skill:dx:dy -- cast once at the player cell + (dx, dy), the way the free town portal does (dm_freetp.c)
+        uint64_t node = xs_node(player, x), sl = *(uint64_t *)(uintptr_t)(player + 0x100), pp = rd(player + 0x38); int px = pp ? *(uint16_t *)(uintptr_t)(pp + 2) : 0, py = pp ? *(uint16_t *)(uintptr_t)(pp + 6) : 0;
+        char *c2 = c ? strchr(c + 1, ':') : NULL, *c3 = c2 ? strchr(c2 + 1, ':') : NULL; int dx = y, dy = c3 ? atoi(c3 + 1) : 0; uint32_t pm = *(uint32_t *)(uintptr_t)(player + 0xc); int r = -1;
+        if (node && sl) { uint64_t old = *(uint64_t *)(uintptr_t)(sl + 0x10); *(uint64_t *)(uintptr_t)(sl + 0x10) = node; r = ((int (*)(uint64_t, uint64_t, int, int, int, uint64_t))(B + 0x6e77f0))(G, player, px + dx, py + dy, 1, node); *(uint64_t *)(uintptr_t)(sl + 0x10) = old; }
+        LOG("DM_TEST_ACTS：施放技能 %d（节点 %s）在 %d,%d（玩家 %d,%d）→ 返回 %d，模式 %u → %u", x, node ? "有" : "【红】没有", px + dx, py + dy, px, py, r, pm, *(uint32_t *)(uintptr_t)(player + 0xc)); }
+    else if (!strncmp(a, "pos", 3)) { uint64_t pp = rd(player + 0x38); LOG("DM_TEST_ACTS：玩家位置 %d,%d 模式 %u 生命上限 %d 法力上限 %d 属性 97/54 %d 97/149 %d", pp ? *(uint16_t *)(uintptr_t)(pp + 2) : -1, pp ? *(uint16_t *)(uintptr_t)(pp + 6) : -1,
+        *(uint32_t *)(uintptr_t)(player + 0xc), gs(player, 7) >> 8, gs(player, 9) >> 8, ((int (*)(uint64_t, int, int))(B + 0x5b9290))(player, 97, 54), ((int (*)(uint64_t, int, int))(B + 0x5b9290))(player, 97, 149)); }
     else if (!strncmp(a, "stat", 4)) LOG("DM_TEST_ACTS：玩家 等级 %d 经验 %d 金币 %d/%d 生命 %d/%d 法力 %d/%d 属性点 %d 技能点 %d 召唤 %d 只", gs(player, 12), gs(player, 13), gs(player, 14), gs(player, 15),
         gs(player, 6) >> 8, gs(player, 7) >> 8, gs(player, 8) >> 8, gs(player, 9) >> 8, gs(player, 4), gs(player, 5), dm_summon_alive());
 }
@@ -320,6 +362,7 @@ void dm_summon_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
     B = main_base; if (!G || !player) return;
     if (G != g_G) { g_G = G; g_nids = 0; }
     test_acts(G, player);
+    { static int last = -1; static uint64_t lp; int w = atomic_load(&g_xs); if (w != last || player != lp || *(uint32_t *)(uintptr_t)(G + 0x170) % 25 == 0) { if (w || last > 0) xs_apply(B, player, 1); last = w; lp = player; } }
     uint64_t req = atomic_exchange(&g_req_summon, UINT64_MAX); if (req != UINT64_MAX) summon(G, player, (int)(req >> 32), (int)(uint32_t)req);
     { void dm_itemgen_tick(uint64_t, uint64_t, uint8_t *); dm_itemgen_tick(G, player, main_base); }   // 刷装备（dm_itemgen.c） | item spawner (dm_itemgen.c)
     if (atomic_exchange(&g_req_clear, 0)) clear_all(G, player);
@@ -353,4 +396,8 @@ void dm_summon_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
         g_hp[w] = hp; g_sk[w] = g_sk[i]; g_snflag[w] = g_snflag[i]; g_snmode[w] = g_snmode[i]; g_snown[w] = g_snown[i]; g_sninpet[w] = g_sninpet[i]; g_ids[w++] = id; n++; }
     if (lo) LOG("召唤：在场%s", line);
     g_nids = w; atomic_store(&g_alive, n);
+}
+void dm_xskill_client_step(uint8_t *mb, uint64_t pl) {   // 游戏主线程（dm_actions.c）：每 30 帧对一次 | game main thread (dm_actions.c): checked every 30 frames
+    static int last = -1, fr; static uint64_t lp; if (!mb || !pl) { lp = 0; return; } int w = atomic_load(&g_xs);
+    if (w == last && pl == lp && ++fr % 30) return; if (w || last > 0) xs_apply(mb, pl, 0); last = w; lp = pl;
 }

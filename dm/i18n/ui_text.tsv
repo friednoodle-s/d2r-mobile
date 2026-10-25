@@ -521,3 +521,16 @@ dmLoNoMerc	没有佣兵或佣兵不在身边，佣兵装备留在背包里	No me
 dmLoBusy	符文之语一键合成还在进行，等它做完再点一键配装	Runeword crafting is still running; tap One-Click Loadout after it finishes	La creación de palabras rúnicas sigue en curso; toca Equipo en un toque cuando termine		Создание рунного слова ещё идёт; нажмите «Экипировка в одно касание» после завершения	룬워드 제작이 진행 중입니다. 끝난 뒤 원클릭 장비를 누르세요	一键配装系统提示（dm_itemgen.c）
 dmLoCursor	光标上拿着东西且背包没空位，一键配装暂停：腾出空位后会自动放进背包并接着做	Something is on the cursor and the inventory is full; loadout paused: free some space and it will be put away and continue	Hay un objeto en el cursor y el inventario está lleno; equipo en pausa: libera espacio y continuará		На курсоре предмет, а инвентарь полон; экипировка на паузе: освободите место, и она продолжится	커서에 아이템이 있고 인벤토리가 가득 차 장비가 일시 중지되었습니다. 공간을 비우면 계속합니다	一键配装系统提示（dm_itemgen.c）
 dmLoBackFail	装备已穿好，但没能切回主手武器组：请自己按切换武器	Gear equipped, but switching back to the primary weapon set failed: switch weapons yourself	Equipo puesto, pero no se pudo volver al juego de armas principal: cambia de arma tú mismo		Снаряжение надето, но вернуться к основному набору оружия не удалось: переключите оружие вручную	장비는 착용했지만 주 무기 세트로 돌아가지 못했습니다. 직접 무기를 전환하세요	一键配装系统提示（dm_itemgen.c）
+dmXsHint	附加技能（等级 20，进局自动挂上；在选技能界面绑到技能栏使用；本职业的不挂；关掉后下一局消失）	Extra skills (level 20, added when you join; bind them on the skill selection screen; your own class's are skipped; gone next game after turning off)	Habilidades extra (nivel 20, se añaden al entrar; asígnalas en la selección de habilidades; las de tu clase se omiten; desaparecen la siguiente partida al apagarlas)		Доп. умения (ур. 20, добавляются при входе; назначьте их в выборе умений; умения своего класса пропускаются; после выключения исчезнут в следующей игре)	추가 기술 (레벨 20, 입장 시 추가; 기술 선택 화면에서 기술 칸에 지정; 자기 직업 기술은 제외; 끄면 다음 게임부터 사라짐)	附加技能（dm_summon.c / dm_summon_panel.m）
+dmXsTeleport	传送	Teleport	Teletransporte		Телепортация	순간이동	附加技能（dm_summon.c / dm_summon_panel.m）
+dmXsBo	战斗命令	Battle Orders	Órdenes de batalla		Боевые приказы	전투 명령	附加技能（dm_summon.c / dm_summon_panel.m）
+dmXsBc	战斗体制	Battle Command	Mando de batalla		Боевой клич командира	전투 지휘	附加技能（dm_summon.c / dm_summon_panel.m）
+dmXsShout	喊叫	Shout	Grito		Окрик	고함	附加技能（dm_summon.c / dm_summon_panel.m）
+dmXsEnergyShield	能量护盾	Energy Shield	Escudo de energía		Энергетический щит	에너지 보호막	附加技能（dm_summon.c / dm_summon_panel.m）
+dmXsFrozenArmor	冰封装甲	Frozen Armor	Armadura congelada		Ледяная броня	서리 갑옷	附加技能（dm_summon.c / dm_summon_panel.m）
+dmXsEnchant	魔法强化	Enchant	Encantamiento		Зачарование	마법 부여	附加技能（dm_summon.c / dm_summon_panel.m）
+dmXsOakSage	橡木智者	Oak Sage	Sabio roble		Дубовый мудрец	참나무 현자	附加技能（dm_summon.c / dm_summon_panel.m）
+dmXsCyclone	飓风装甲	Cyclone Armor	Armadura de ciclón		Броня циклона	회오리 갑옷	附加技能（dm_summon.c / dm_summon_panel.m）
+dmXsBos	速度爆发	Burst of Speed	Ráfaga de velocidad		Всплеск скорости	폭발적 속도	附加技能（dm_summon.c / dm_summon_panel.m）
+dmXsFade	闪避	Fade	Desvanecimiento		Угасание	희미해지기	附加技能（dm_summon.c / dm_summon_panel.m）
+dmXsHolyShield	神圣之盾	Holy Shield	Escudo sagrado		Святой щит	신성한 방패	附加技能（dm_summon.c / dm_summon_panel.m）
