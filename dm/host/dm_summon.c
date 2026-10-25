@@ -292,6 +292,7 @@ void dm_summon_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
     B = main_base; if (!G || !player) return;
     if (G != g_G) { g_G = G; g_nids = 0; }
     int boss = atomic_exchange(&g_req_boss, -1); if (boss >= 0) summon(G, player, boss, atomic_load(&g_req_n));
+    { void dm_itemgen_tick(uint64_t, uint64_t, uint8_t *); dm_itemgen_tick(G, player, main_base); }   // 刷装备（dm_itemgen.c） | item spawner (dm_itemgen.c)
     if (atomic_exchange(&g_req_clear, 0)) clear_all(G, player);
     int op = atomic_exchange(&g_req_op, 0); if (op) cheat(player, op, atomic_load(&g_req_arg));
     uint32_t m = *(uint32_t *)(uintptr_t)(player + 0xc);

@@ -650,8 +650,26 @@ void dm_runeword_on_uimsg(const char *cat, const char *act, const char *arg) {  
     if (!strcmp(arg, "PlayerInventoryExpansionLayout")) { if (!strcmp(act, "OpenPanel") || !strcmp(act, "OpenExclusivePanel")) g_inv_open = 1; else if (!strcmp(act, "ClosePanel") || !strcmp(act, "UnloadPanel")) g_inv_open = 0; }
     if (!strcmp(act, "ClosePanel") && (!strcmp(arg, "PlayerInventoryExpansionLayout") || !strcmp(arg, "BankExpansionLayout") || !strcmp(arg, "UISwitcher"))) list_close(b, "面板关了");
 }
+// 刷装备（dm_itemgen.c）生成成品符文之语：服务端把带孔底材和符文都捡进背包后投一个请求，这里在物品栏开着、没有进行中的合成时，
+// 对那件底材按表行 rec 走同一条一键合成（预检、取符文、0x19 / 0x28 镶嵌都照旧）。底材找不到就丢掉请求；物品栏没开就一直等
+// Item spawner (dm_itemgen.c) making a finished runeword: after the server has picked the socketed base and the runes into the inventory it posts a request; here, while the inventory is open and no crafting is in progress,
+// the same one-tap crafting is run for that base by table row rec (pre-check, taking runes, 0x19 / 0x28 socketing all unchanged). If the base cannot be found the request is dropped; if the inventory is not open it keeps waiting
+static _Atomic uint64_t g_auto;   // 底材 id << 32 | 表行 + 1；0 = 没有 | base id << 32 | table row + 1; 0 = none
+void dm_runeword_auto(uint32_t base_id, int rec) { atomic_store(&g_auto, (uint64_t)base_id << 32 | (uint32_t)(rec + 1)); }
+int dm_runeword_auto_pending(void) { return atomic_load(&g_auto) != 0; }
+static void auto_pump(uint8_t *b) {
+    uint64_t a = atomic_load(&g_auto); if (!a || g_job.st || g_list.open || !item_panel_open(b)) return;
+    uint32_t base = (uint32_t)(a >> 32); int rec = (int)(uint32_t)a - 1; uint64_t it = unit_item(b, base);
+    if (!it) { static int miss; if (++miss < 300) return; miss = 0; atomic_store(&g_auto, 0); LOG("符文之语：自动合成找不到底材 id %u，放弃", base); return; }
+    atomic_store(&g_auto, 0);
+    if (!build_list(b, it)) { LOG("符文之语：自动合成 底材 id %u 不匹配任何符文之语", base); return; }
+    g_list.base = base; int row = -1; for (int i = 0; i < g_list.n; i++) if (g_list.c[i].rec == rec) row = i;
+    LOG("符文之语：自动合成 底材 id %u 表行 %d → 清单第 %d 行%s", base, rec, row, row >= 0 && g_list.c[row].ok ? "（可做）" : "（不可做）");
+    if (row >= 0) job_start(b, row);
+}
 void dm_runeword_pump(void) {   // 取手柄处每帧调（游戏主线程，dm_actions_pump 转来） | Called every frame at the controller sampling point (game main thread, forwarded from dm_actions_pump)
     uint8_t *b = rb(); if (!b) return;
+    auto_pump(b);
     if (g_list.open && dm_ui_unstable()) return;   // 界面正在重建：这一帧不排版、不找控件 | The UI is rebuilding: no layout and no widget lookup this frame
     if (w_stale()) { int was = g_list.open; g_list.open = 0; memset(&W, 0, sizeof W); W.b = b; g_check_at = 0; if (was) LOG("符文之语：界面重建过（界面代号变了）→ 清单当作已关，缓存的控件作废"); }
     if (g_list.open) { uint64_t it = unit_item(b, g_list.base); if (!inv_panel(b) || !it || *(uint32_t *)(it + 0xc) > 1) list_close(b, "底材挪走了或面板没了"); }   // 先核面板与底材，再用缓存排版 | Check the panel and base item first, then use the cached layout

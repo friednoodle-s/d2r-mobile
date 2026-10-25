@@ -1,15 +1,17 @@
-// 召唤控制台的界面：游戏画面边上一个可拖动的圆按钮，点开一块面板，分「召唤」「修改」两页。原生 UIKit，不改游戏布局。
-// 按钮只调 dm/host/dm_summon.h 的投请求函数，执行都在服务端拍里（dm_summon.c）。挂在 DmMetalView 上（front_ios.m），前端页面（选角等）藏起来。
-// UI of the summon console: a draggable round button at the edge of the game view; tapping it opens a panel with two pages, "Summon" and "Cheats". Native UIKit, the game layouts are untouched.
-// Buttons only call the request functions in dm/host/dm_summon.h; everything executes in the server tick (dm_summon.c). Attached to DmMetalView (front_ios.m), hidden on front-end pages (character select etc.).
+// 召唤控制台的界面：游戏画面边上一个可拖动的圆按钮，点开一块面板，分「召唤」「修改」「装备」三页。原生 UIKit，不改游戏布局。
+// 按钮只调 dm/host/dm_summon.h、dm_itemgen.h 的投请求函数，执行都在服务端拍里（dm_summon.c、dm_itemgen.c）。挂在 DmMetalView 上（front_ios.m），前端页面（选角等）藏起来。
+// UI of the summon console: a draggable round button at the edge of the game view; tapping it opens a panel with three pages, "Summon", "Cheats" and "Items". Native UIKit, the game layouts are untouched.
+// Buttons only call the request functions in dm/host/dm_summon.h and dm_itemgen.h; everything executes in the server tick (dm_summon.c, dm_itemgen.c). Attached to DmMetalView (front_ios.m), hidden on front-end pages (character select etc.).
 #import <UIKit/UIKit.h>
 #include "../../host/dm_summon.h"
+#include "../../host/dm_itemgen.h"
 #include "dm_i18n.h"
 
 // 面板右下角的版本号：每次交给玩家测试的构建都改这里，截图里一眼看出装的是哪一版 | version shown at the panel's bottom-right: bumped for every build handed out for testing, so a screenshot shows which one is installed
-#define DM_SUMMON_UI_VER "summon console 9"
+#define DM_SUMMON_UI_VER "summon console 10"
+#define DM_NOLEVEL_PREF @"dmItemNoLevel"   // 免等级开关记在 NSUserDefaults（iPad 上改不了 txt） | the no-level switch is kept in NSUserDefaults (txt files cannot be edited on the iPad)
 
-@interface DmSummonPanel : NSObject
+@interface DmSummonPanel : NSObject <UITableViewDataSource, UITableViewDelegate, UITextFieldDelegate>
 @property (nonatomic, strong) UIButton *fab;
 @property (nonatomic, strong) UIView *panel;
 @property (nonatomic, strong) UISegmentedControl *tabs, *bindSeg;
@@ -21,6 +23,12 @@
 @property (nonatomic, strong) NSTimer *timer;
 @property (nonatomic) int boss;
 @property (nonatomic) BOOL moved;   // 玩家拖过按钮：之后不再自动放回左上角 | the player has dragged the button: no longer snapped back to the top-left
+// 「装备」页：种类（暗金 / 套装 / 符文之语）+ 搜索框 + 免等级开关 + 清单，点一行生成 | "Items" page: kind (unique / set / runeword) + search field + no-level switch + list; tapping a row creates it
+@property (nonatomic, strong) UIView *pageItems;
+@property (nonatomic, strong) UISegmentedControl *kindSeg;
+@property (nonatomic, strong) UITextField *search;
+@property (nonatomic, strong) UITableView *itemTable;
+@property (nonatomic, strong) NSMutableArray<NSNumber *> *itemRows;   // 搜索后留下的清单序号 | list indexes left after the search
 @end
 
 static DmSummonPanel *g_panel;
@@ -64,7 +72,7 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     _panel.backgroundColor = [UIColor colorWithWhite:0.08 alpha:0.94]; _panel.layer.cornerRadius = 12;
     _panel.layer.borderWidth = 1; _panel.layer.borderColor = [UIColor colorWithRed:0.62 green:0.5 blue:0.3 alpha:1].CGColor;
     [host addSubview:_panel];
-    _tabs = [[UISegmentedControl alloc] initWithItems:@[@(dm_ui("dmSumTabSummon")), @(dm_ui("dmSumTabCheat"))]]; _tabs.selectedSegmentIndex = 0;
+    _tabs = [[UISegmentedControl alloc] initWithItems:@[@(dm_ui("dmSumTabSummon")), @(dm_ui("dmSumTabCheat")), @(dm_ui("dmSumTabItems"))]]; _tabs.selectedSegmentIndex = 0;
     // 系统缺省样式在深色面板上没选中那页的字几乎看不见（真机截图：「修改」页签没人发现）：底色、选中色、字色都显式给
     // With the system default style, the unselected segment's text is almost invisible on the dark panel (device screenshot: nobody found the "Cheats" tab): background, selected tint and text colors are all set explicitly
     style_seg(_tabs);
@@ -98,16 +106,35 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
         UISwitch *s = [UISwitch new]; s.tag = 960 + i; s.on = i == 0 ? dm_cheat_god() : i == 1 ? dm_cheat_inf_mana() : dm_cheat_buff(i - 2);
         [s addTarget:self action:@selector(toggleSwitch:) forControlEvents:UIControlEventValueChanged]; [_pageCheat addSubview:s];
     }
+
+    _pageItems = [UIView new]; _pageItems.hidden = YES; [_panel addSubview:_pageItems];
+    _kindSeg = [[UISegmentedControl alloc] initWithItems:@[@(dm_ui("dmItemUnique")), @(dm_ui("dmItemSet")), @(dm_ui("dmItemRw"))]];
+    style_seg(_kindSeg); _kindSeg.selectedSegmentIndex = DM_ITEM_UNIQUE; [_kindSeg addTarget:self action:@selector(refilter) forControlEvents:UIControlEventValueChanged]; [_pageItems addSubview:_kindSeg];
+    _search = [UITextField new]; _search.delegate = self; _search.textColor = UIColor.whiteColor; _search.font = [UIFont systemFontOfSize:15];
+    _search.backgroundColor = [UIColor colorWithWhite:0.18 alpha:1]; _search.layer.cornerRadius = 8; _search.layer.borderWidth = 1; _search.layer.borderColor = [UIColor colorWithRed:0.62 green:0.5 blue:0.3 alpha:1].CGColor;
+    _search.attributedPlaceholder = [[NSAttributedString alloc] initWithString:@(dm_ui("dmItemSearch")) attributes:@{ NSForegroundColorAttributeName: [UIColor colorWithWhite:0.6 alpha:1] }];
+    _search.leftView = [[UIView alloc] initWithFrame:CGRectMake(0, 0, 8, 8)]; _search.leftViewMode = UITextFieldViewModeAlways;
+    _search.clearButtonMode = UITextFieldViewModeWhileEditing; _search.returnKeyType = UIReturnKeyDone; _search.autocorrectionType = UITextAutocorrectionTypeNo; _search.autocapitalizationType = UITextAutocapitalizationTypeNone;
+    [_search addTarget:self action:@selector(refilter) forControlEvents:UIControlEventEditingChanged]; [_pageItems addSubview:_search];
+    UILabel *nl = mk_label(@(dm_ui("dmItemNoLevel")), 14); nl.tag = 970; [_pageItems addSubview:nl];
+    [NSUserDefaults.standardUserDefaults registerDefaults:@{ DM_NOLEVEL_PREF: @YES }];
+    UISwitch *ns = [UISwitch new]; ns.tag = 971; ns.on = [NSUserDefaults.standardUserDefaults boolForKey:DM_NOLEVEL_PREF]; dm_itemgen_set_nolevel(ns.on);
+    [ns addTarget:self action:@selector(noLevelChanged:) forControlEvents:UIControlEventValueChanged]; [_pageItems addSubview:ns];
+    UILabel *hint = mk_label(@(dm_ui("dmItemHint")), 12); hint.tag = 972; hint.textColor = [UIColor colorWithWhite:0.7 alpha:1]; [_pageItems addSubview:hint];
+    _itemTable = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain]; _itemTable.dataSource = self; _itemTable.delegate = self;
+    _itemTable.backgroundColor = UIColor.clearColor; _itemTable.separatorColor = [UIColor colorWithWhite:0.3 alpha:1]; _itemTable.indicatorStyle = UIScrollViewIndicatorStyleWhite;
+    _itemTable.rowHeight = 44; _itemTable.keyboardDismissMode = UIScrollViewKeyboardDismissModeOnDrag; [_pageItems addSubview:_itemTable];
+    _itemRows = [NSMutableArray array]; [self refilter];
     [self refreshBoss];
     return self;
 }
 - (void)layoutIn:(CGRect)b {
-    CGFloat w = MIN(420, b.size.width - 32), h = MIN(330, b.size.height - 32), pad = 12;
+    CGFloat w = MIN(420, b.size.width - 32), h = MIN(_tabs.selectedSegmentIndex == 2 ? 480 : 330, b.size.height - 32), pad = 12;   // 装备页要放清单，高一些 | the items page holds a list, so it is taller
     _panel.frame = CGRectMake((b.size.width - w) / 2, (b.size.height - h) / 2, w, h);
     _tabs.frame = CGRectMake(pad, pad, w - 2 * pad - 80, 34);
     [_panel viewWithTag:900].frame = CGRectMake(w - pad - 72, pad, 72, 34);
     [_panel viewWithTag:905].frame = CGRectMake(w - pad - 160, h - 18, 160, 14);
-    CGRect page = CGRectMake(pad, pad + 44, w - 2 * pad, h - 2 * pad - 44 - 8); _pageSummon.frame = page; _pageCheat.frame = page;   // 底下留出版本号那一行 | leave the version line free at the bottom
+    CGRect page = CGRectMake(pad, pad + 44, w - 2 * pad, h - 2 * pad - 44 - 8); _pageSummon.frame = page; _pageCheat.frame = page; _pageItems.frame = page;   // 底下留出版本号那一行 | leave the version line free at the bottom
     CGFloat pw = page.size.width, bw = (pw - 2 * 8) / 3, bh = 44;
     for (int i = 0; i < DM_SUM_NBOSS; i++) _bossButtons[i].frame = CGRectMake((i % 3) * (bw + 8), (i / 3) * (bh + 8), bw, bh);
     CGFloat y = 2 * (bh + 8) + 4;
@@ -119,13 +146,17 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     CGFloat top = ((k + 2) / 3) * (bh + 8) + 6;   // 按钮占的行数（每行 3 个） | rows taken by the buttons (3 per row)
     for (int i = 0; i < 2 + DM_NBUFF; i++) { CGFloat yy = top + i * 42; [_pageCheat viewWithTag:950 + i].frame = CGRectMake(0, yy, pw - 70, 36); [_pageCheat viewWithTag:960 + i].frame = CGRectMake(pw - 56, yy + 2, 51, 31); }
     _pageCheat.contentSize = CGSizeMake(pw, top + (2 + DM_NBUFF) * 42);
+    _kindSeg.frame = CGRectMake(0, 0, pw, 32); _search.frame = CGRectMake(0, 40, pw, 36);
+    [_pageItems viewWithTag:970].frame = CGRectMake(0, 84, pw - 70, 32); [_pageItems viewWithTag:971].frame = CGRectMake(pw - 56, 84, 51, 31);
+    [_pageItems viewWithTag:972].frame = CGRectMake(0, 120, pw, 18);
+    _itemTable.frame = CGRectMake(0, 142, pw, MAX(44, page.size.height - 142));
     [self placeFab:b];
 }
 - (void)toggle {
     _panel.hidden = !_panel.hidden;
     if (!_panel.hidden) { [_panel.superview bringSubviewToFront:_panel]; [self layoutIn:_panel.superview.bounds]; [self tick];
         _timer = [NSTimer scheduledTimerWithTimeInterval:0.5 target:self selector:@selector(tick) userInfo:nil repeats:YES]; }
-    else { [_timer invalidate]; _timer = nil; }
+    else { [_timer invalidate]; _timer = nil; [_search resignFirstResponder]; }
 }
 - (void)tick { _aliveLabel.text = [NSString stringWithFormat:@(dm_ui("dmSumAlive")), dm_summon_alive()]; }
 // 按钮缺省在左上角（让开刘海 / 圆角的安全区再留 8 点）；拖过以后只保证不出界
@@ -141,7 +172,32 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     CGRect f = _fab.frame; f.origin.x = MAX(0, MIN(f.origin.x + d.x, host.bounds.size.width - f.size.width)); f.origin.y = MAX(0, MIN(f.origin.y + d.y, host.bounds.size.height - f.size.height)); _fab.frame = f;
 }
 - (void)bindChanged { dm_summon_set_bind_mode((int)_bindSeg.selectedSegmentIndex); }
-- (void)tabChanged { _pageSummon.hidden = _tabs.selectedSegmentIndex != 0; _pageCheat.hidden = _tabs.selectedSegmentIndex != 1; }
+- (void)tabChanged {
+    _pageSummon.hidden = _tabs.selectedSegmentIndex != 0; _pageCheat.hidden = _tabs.selectedSegmentIndex != 1; _pageItems.hidden = _tabs.selectedSegmentIndex != 2;
+    if (_pageItems.hidden) [_search resignFirstResponder];
+    [self layoutIn:_panel.superview.bounds];   // 装备页面板高度不同 | the items page has a different panel height
+}
+- (void)noLevelChanged:(UISwitch *)s { dm_itemgen_set_nolevel(s.on); [NSUserDefaults.standardUserDefaults setBool:s.on forKey:DM_NOLEVEL_PREF]; }
+- (void)refilter {
+    int kind = (int)_kindSeg.selectedSegmentIndex, n = dm_itemgen_count(kind); const char *q = _search.text.length ? _search.text.UTF8String : "";
+    [_itemRows removeAllObjects]; for (int i = 0; i < n; i++) if (dm_itemgen_match(kind, i, q)) [_itemRows addObject:@(i)];
+    [_itemTable reloadData]; if (_itemRows.count) [_itemTable scrollToRowAtIndexPath:[NSIndexPath indexPathForRow:0 inSection:0] atScrollPosition:UITableViewScrollPositionTop animated:NO];
+}
+- (BOOL)textFieldShouldReturn:(UITextField *)t { [t resignFirstResponder]; return YES; }
+- (NSInteger)tableView:(UITableView *)t numberOfRowsInSection:(NSInteger)s { return (NSInteger)_itemRows.count; }
+- (UITableViewCell *)tableView:(UITableView *)t cellForRowAtIndexPath:(NSIndexPath *)ip {
+    UITableViewCell *c = [t dequeueReusableCellWithIdentifier:@"dmItem"];
+    if (!c) { c = [[UITableViewCell alloc] initWithStyle:UITableViewCellStyleSubtitle reuseIdentifier:@"dmItem"]; c.backgroundColor = UIColor.clearColor;
+        c.textLabel.textColor = UIColor.whiteColor; c.textLabel.font = [UIFont boldSystemFontOfSize:15]; c.detailTextLabel.textColor = [UIColor colorWithWhite:0.65 alpha:1]; c.detailTextLabel.font = [UIFont systemFontOfSize:12];
+        c.selectedBackgroundView = [UIView new]; c.selectedBackgroundView.backgroundColor = [UIColor colorWithRed:0.55 green:0.42 blue:0.18 alpha:1]; }
+    int kind = (int)_kindSeg.selectedSegmentIndex, i = _itemRows[(NSUInteger)ip.row].intValue;
+    c.textLabel.text = dm_itemgen_shield(kind, i) ? [NSString stringWithFormat:@(dm_ui("dmItemShieldVar")), @(dm_itemgen_name(kind, i))] : @(dm_itemgen_name(kind, i)); c.detailTextLabel.text = @(dm_itemgen_sub(kind, i));
+    return c;
+}
+- (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip {
+    [t deselectRowAtIndexPath:ip animated:YES]; [_search resignFirstResponder];
+    dm_itemgen_request((int)_kindSeg.selectedSegmentIndex, _itemRows[(NSUInteger)ip.row].intValue);
+}
 - (void)pickBoss:(UIButton *)b { _boss = (int)b.tag; [self refreshBoss]; }
 - (void)refreshBoss { for (UIButton *b in _bossButtons) b.backgroundColor = b.tag == _boss ? [UIColor colorWithRed:0.55 green:0.42 blue:0.18 alpha:1] : [UIColor colorWithWhite:0.22 alpha:1]; }
 - (void)countChanged { _countLabel.text = [NSString stringWithFormat:@(dm_ui("dmSumCount")), _count]; }
