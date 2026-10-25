@@ -172,9 +172,11 @@ void dm_autoplay_tick(uint64_t G, uint64_t pl, uint8_t *mb) {
         if (bi) { uint32_t id = rd32(bi + 8);
             if (bdi > 2 * 2) { if (!jump_to(G, pl, ix, iy) && S.ntried < MAXTRIED) S.tried[S.ntried++] = id; return; }
             if (S.ntried < MAXTRIED) S.tried[S.ntried++] = id;
-            uint64_t ip = rd(bi + 0x38); uint8_t pk[17] = { 0x16 }; uint32_t one = 1; memcpy(pk + 1, &id, 4); memcpy(pk + 5, (void *)(uintptr_t)(ip + 0x10), 4); memcpy(pk + 9, (void *)(uintptr_t)(ip + 0x14), 4); memcpy(pk + 13, &one, 4);
+            uint64_t ip = rd(bi + 0x38); uint8_t pk[17] = { 0x16 }; uint32_t one = 1, q = rd32(rd(bi + 0x10)); memcpy(pk + 1, &id, 4); memcpy(pk + 5, (void *)(uintptr_t)(ip + 0x10), 4); memcpy(pk + 9, (void *)(uintptr_t)(ip + 0x14), 4); memcpy(pk + 13, &one, 4);
             uint32_t *busy = (uint32_t *)(uintptr_t)(G + 0x19050), old = *busy; *busy = 1; ((void (*)(uint64_t, uint64_t, uint8_t *, uint32_t))(B + 0x6e5b40))(G, pl, pk, 17); *busy = old;
-            LOG("自动清图：捡 id %u（品质 %u）→ %s", id, rd32(rd(bi + 0x10)), rd32(bi + 0xc) == 3 ? "还在地上（背包满 / 够不着）" : "捡到");
+            // 捡起后不再碰 bi：金币一捡就并进金币数、单位当场释放（云端测试读到乱的品质）；按 id 回地上物品表查还在不在 | after the pick-up bi is not touched again: gold merges into the gold count and the unit is freed at once (the cloud test read garbage quality); look the id up in the ground table instead
+            int still = 0; for (int b = 0; b < 128 && !still; b++) for (uint64_t it = rd(G + 0x2e30 + 8 * b); it; it = rd(it + 0x158)) if (rd32(it + 8) == id) { still = rd32(it + 0xc) == 3; break; }
+            LOG("自动清图：捡 id %u（品质 %u）→ %s", id, q, still ? "还在地上（背包满 / 够不着）" : "捡到");
             return; } }
     // 3. 探索：去最近的没去过的房间 | 3. explore: go to the nearest unvisited room
     int bestr = -1; long brd = 0, cx = 0, cy = 0;
