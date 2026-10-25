@@ -8,7 +8,7 @@
 #include "dm_i18n.h"
 
 // 面板右下角的版本号：每次交给玩家测试的构建都改这里，截图里一眼看出装的是哪一版 | version shown at the panel's bottom-right: bumped for every build handed out for testing, so a screenshot shows which one is installed
-#define DM_SUMMON_UI_VER "summon console 15"
+#define DM_SUMMON_UI_VER "summon console 16"
 #define DM_NOLEVEL_PREF @"dmItemNoLevel"   // 免等级开关记在 NSUserDefaults（iPad 上改不了 txt） | the no-level switch is kept in NSUserDefaults (txt files cannot be edited on the iPad)
 
 @interface DmSummonPanel : NSObject <UITableViewDataSource, UITableViewDelegate, UITextFieldDelegate>
