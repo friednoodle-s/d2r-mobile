@@ -570,6 +570,8 @@ void dm_itemgen_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
     B = main_base; if (!G || !player) return;
     lv_apply();
     rw_post(G, player);
+    { static int t = -1; if (t < 0) t = getenv("DM_TEST_LOADOUT") != NULL;   // 云端自动测试：物品栏一开就点一次一键配装 | cloud test run: tap the loadout once as soon as the inventory is open
+      if (t == 1 && J.st == LO_IDLE && dm_runeword_inv_open()) { t = 2; LOG("DM_TEST_LOADOUT：物品栏开着 → 点一键配装"); dm_itemgen_loadout(); } }
     lo_tick(G, player);
     if (J.st != LO_IDLE) return;   // 配装进行中不接单件请求 | no single-item requests while a loadout runs
     int r = atomic_exchange(&g_req, -1); if (r < 0) return;
