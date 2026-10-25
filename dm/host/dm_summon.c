@@ -169,7 +169,7 @@ void dm_summon_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
     for (int i = 0; i < g_nids; i++) { uint32_t id = g_ids[i]; uint64_t u = find_unit(G, id);
         if (!u) { LOG("召唤：id %u 不在单位表了（卸载或被回收），上一拍生命 %d", id, g_hp[i] >> 8); continue; }
         if (!alive(u)) { LOG("召唤：id %u 死了：上一拍生命 %d、上限 %d、等级 %d、模式 %u、+0x124 %#x", id, g_hp[i] >> 8, gs(u, 7) >> 8, gs(u, 12), *(uint32_t *)(uintptr_t)(u + 0xc), *(uint32_t *)(uintptr_t)(u + 0x124)); continue; }
-        int hp = gs(u, 6); if (t % 50 == 0 && lo < (int)sizeof line - 60) lo += snprintf(line + lo, sizeof line - lo, " [id %u 生命 %d/%d 等级 %d]", id, hp >> 8, gs(u, 7) >> 8, gs(u, 12));
+        int hp = gs(u, 6); if (t % 50 == 0 && lo < (int)sizeof line - 60) lo += snprintf(line + lo, sizeof line - lo, " [id %u hp %d/%d lv %d]", id, hp >> 8, gs(u, 7) >> 8, gs(u, 12));
         g_hp[w] = hp; g_ids[w++] = id; n++; }
     if (lo) LOG("召唤：在场%s", line);
     g_nids = w; atomic_store(&g_alive, n);
