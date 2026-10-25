@@ -509,8 +509,10 @@ static int lo_rwjob(uint64_t G, uint64_t pl, const lo_piece_t *pc) {
     if (!J.k) { int rec = rw_row_key(G, pc->rwkey); if (rec < 0) { LOG("【红】一键配装：运行时符文之语表里没有 %s", pc->rwkey); lo_stop("dmLoFail", pc->what); return 0; }
         dm_runeword_auto(J.base, rec); atomic_store(&g_lo_busy, 2); J.k = 1; J.backtry = 0; LOG("一键配装：「%s」交给一键合成（底材 id %u、表行 %d）", pc->what, J.base, rec); return 0; }
     uint64_t b = own_item(pl, J.base), d = b ? rd(b + 0x10) : 0;
-    if (!d || !(*(uint32_t *)(uintptr_t)(d + 0x18) & 0x04000000)) {
-        if (++J.backtry > 750 && !dm_runeword_busy()) { LOG("一键配装：「%s」30 秒没成词", pc->what); lo_stop("dmLoFail", pc->what); } return 0; }
+    // 成词标志服务端先出；客户端那边的一键合成还要收尾（读回、放下光标），等它整个结束再往下做，不然下一件抢背包格（云端测试 4.1：巨龙盾背包放不下）
+    // The word flag shows on the server first; the client-side one-tap crafting still has to finish (readback, cursor), so wait until it has fully ended before going on, or the next piece races for inventory cells (cloud test 4.1: no room for the Dragon shield)
+    if (!d || !(*(uint32_t *)(uintptr_t)(d + 0x18) & 0x04000000) || dm_runeword_busy()) {
+        if (++J.backtry > 750 && (!dm_runeword_busy() || J.backtry > 1500)) { LOG("一键配装：「%s」30 秒没成词", pc->what); lo_stop("dmLoFail", pc->what); } return 0; }
     atomic_store(&g_lo_busy, 1); LOG("一键配装：「%s」成词", pc->what);
     struct lo_aff ab = { pc->what, pc->bst, pc->nbst, 0 }, a = { pc->what, pc->st, pc->nst, 0 };
     // 普通品质底材成词后没有物品词缀表（19.1 真机：找不到词缀表），底材附加也写进成词那张表（0xab，同样存档）；写不上只记红字，照样穿上做下一件
