@@ -8,7 +8,7 @@
 #include "dm_i18n.h"
 
 // 面板右下角的版本号：每次交给玩家测试的构建都改这里，截图里一眼看出装的是哪一版 | version shown at the panel's bottom-right: bumped for every build handed out for testing, so a screenshot shows which one is installed
-#define DM_SUMMON_UI_VER "summon console 11"
+#define DM_SUMMON_UI_VER "summon console 12"
 #define DM_NOLEVEL_PREF @"dmItemNoLevel"   // 免等级开关记在 NSUserDefaults（iPad 上改不了 txt） | the no-level switch is kept in NSUserDefaults (txt files cannot be edited on the iPad)
 
 @interface DmSummonPanel : NSObject <UITableViewDataSource, UITableViewDelegate, UITextFieldDelegate>
@@ -120,6 +120,7 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     [NSUserDefaults.standardUserDefaults registerDefaults:@{ DM_NOLEVEL_PREF: @YES }];
     UISwitch *ns = [UISwitch new]; ns.tag = 971; ns.on = [NSUserDefaults.standardUserDefaults boolForKey:DM_NOLEVEL_PREF]; dm_itemgen_set_nolevel(ns.on);
     [ns addTarget:self action:@selector(noLevelChanged:) forControlEvents:UIControlEventValueChanged]; [_pageItems addSubview:ns];
+    UIButton *lo = mk_button(@(dm_ui("dmLoButton")), self, @selector(loadout)); lo.tag = 973; lo.backgroundColor = [UIColor colorWithRed:0.42 green:0.1 blue:0.07 alpha:1]; [_pageItems addSubview:lo];
     UILabel *hint = mk_label(@(dm_ui("dmItemHint")), 12); hint.tag = 972; hint.textColor = [UIColor colorWithWhite:0.7 alpha:1]; [_pageItems addSubview:hint];
     _itemTable = [[UITableView alloc] initWithFrame:CGRectZero style:UITableViewStylePlain]; _itemTable.dataSource = self; _itemTable.delegate = self;
     _itemTable.backgroundColor = UIColor.clearColor; _itemTable.separatorColor = [UIColor colorWithWhite:0.3 alpha:1]; _itemTable.indicatorStyle = UIScrollViewIndicatorStyleWhite;
@@ -148,8 +149,9 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     _pageCheat.contentSize = CGSizeMake(pw, top + (2 + DM_NBUFF) * 42);
     _kindSeg.frame = CGRectMake(0, 0, pw, 32); _search.frame = CGRectMake(0, 40, pw, 36);
     [_pageItems viewWithTag:970].frame = CGRectMake(0, 84, pw - 70, 32); [_pageItems viewWithTag:971].frame = CGRectMake(pw - 56, 84, 51, 31);
-    [_pageItems viewWithTag:972].frame = CGRectMake(0, 120, pw, 18);
-    _itemTable.frame = CGRectMake(0, 142, pw, MAX(44, page.size.height - 142));
+    [_pageItems viewWithTag:973].frame = CGRectMake(0, 120, pw, 40);
+    [_pageItems viewWithTag:972].frame = CGRectMake(0, 166, pw, 18);
+    _itemTable.frame = CGRectMake(0, 188, pw, MAX(44, page.size.height - 188));
     [self placeFab:b];
 }
 - (void)toggle {
@@ -177,6 +179,7 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     if (_pageItems.hidden) [_search resignFirstResponder];
     [self layoutIn:_panel.superview.bounds];   // 装备页面板高度不同 | the items page has a different panel height
 }
+- (void)loadout { [_search resignFirstResponder]; dm_itemgen_loadout(); }
 - (void)noLevelChanged:(UISwitch *)s { dm_itemgen_set_nolevel(s.on); [NSUserDefaults.standardUserDefaults setBool:s.on forKey:DM_NOLEVEL_PREF]; }
 - (void)refilter {
     int kind = (int)_kindSeg.selectedSegmentIndex, n = dm_itemgen_count(kind); const char *q = _search.text.length ? _search.text.UTF8String : "";

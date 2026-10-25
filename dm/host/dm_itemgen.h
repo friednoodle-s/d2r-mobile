@@ -12,6 +12,8 @@ const char *dm_itemgen_sub(int kind, int i);    // 副标题：套装名 / 底�
 int dm_itemgen_variant(int kind, int i);        // 符文之语行的底材变体 DM_RW_*（其他种类为 0） | base variant DM_RW_* of a runeword row (0 for other kinds)
 int dm_itemgen_match(int kind, int i, const char *q);   // 搜索：中英文名（套装另比套装名）含 q；q 空串全中 | search: the Chinese or English name (sets also the set name) contains q; an empty q matches all
 void dm_itemgen_request(int kind, int i);       // 界面线程调：投请求，服务端下一拍生成 | called from the UI thread: posts a request, created on the next server tick
+int dm_itemgen_busy(void);                      // 一键配装进行中（dm_runeword.c 的一键合成据此让开光标） | a loadout is running (dm_runeword.c's one-tap crafting keeps off the cursor)
+void dm_itemgen_loadout(void);                  // 界面线程调：一键配装（圣火圣骑士整套，要物品栏开着） | called from the UI thread: one-click loadout (whole Holy Fire paladin set, needs the inventory open)
 void dm_itemgen_set_nolevel(int on);            // 装备免等级需求（运行时表清零，全部物品生效，不进存档） | no level requirement (runtime tables zeroed, applies to every item, never saved)
 int dm_itemgen_nolevel(void);
 

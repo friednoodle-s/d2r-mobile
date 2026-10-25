@@ -38,6 +38,8 @@
 #include <string.h>
 #include <time.h>
 
+int dm_itemgen_busy(void);   // dm_itemgen.c：一键配装进行中，一键合成不动光标 | dm_itemgen.c: a loadout is running, one-tap crafting keeps off the cursor
+
 #define NROW 15                       // 清单最多几行（3.3 表里一种底材最多匹配 15 个：3 孔身体护甲 / 斗篷） | Maximum rows in the list (in the 3.3 table one kind of base item matches at most 15: 3-socket body armor / cloak)
 enum { PG_INV = 0, PG_CUBE = 3, PG_STASH = 4 };
 // 物品所在页 = 物品数据 +0x55（原版客户端拼 0x28 与服务端格子快照都读它，读码）。+0x5c 是拿起时服务端回写的另一个字节，放进储藏箱后仍是 0——
@@ -228,7 +230,7 @@ static void place(uint64_t w, int x, int y) { if (!w) return; int32_t *r = (int3
 // List geometry (inventory panel coordinates, panel 1408x1486): backplate x 262, width 1125, going down from y 60; the title takes RW_HEAD, each runeword name line takes RW_L1, each rune string line RW_LH, with RW_RGAP between rows; the backplate goes down to RW_YMAX at most.
 // When one page is not enough, paginate (do not cut off the overflow; switch pages like the stash page instead): a row of paging widgets at the bottom takes RW_NAV_H, copied from the stash page (left / right arrows + 「第 x/y 页」(Page x/y) in the middle)
 enum { RW_X = 262, RW_W = 1125, RW_Y0 = 60, RW_HEAD = 80, RW_L1 = 56, RW_LH = 48, RW_RGAP = 28, RW_PAD = 36, RW_GAP = 22, RW_NAV_H = 80, RW_PG_W = 230, RW_YMAX = 1470, RW_PER_PAGE = 8 };   // 每页最多 8 个，每两个之间一条分隔线 | At most 8 per page, with one separator between every two
-static int g_inv_open;   // 物品栏面板开着：按界面消息 OpenPanel / ClosePanel PlayerInventoryExpansionLayout 记（面板控件的可见位在没打开时也可能是 1，真机实测靠不住） | Inventory panel open: tracked by the UI messages OpenPanel / ClosePanel PlayerInventoryExpansionLayout (the panel widget's visible bit can also be 1 when it is not open; measured on a real device, unreliable)
+static _Atomic int g_inv_open;   // 物品栏面板开着（一键配装在服务端线程读，原子）：按界面消息 OpenPanel / ClosePanel PlayerInventoryExpansionLayout 记（面板控件的可见位在没打开时也可能是 1，真机实测靠不住） | Inventory panel open: tracked by the UI messages OpenPanel / ClosePanel PlayerInventoryExpansionLayout (the panel widget's visible bit can also be 1 when it is not open; measured on a real device, unreliable)
 static uint64_t inv_panel(uint8_t *b) { if (!g_inv_open) return 0; uint64_t root = *(uint64_t *)(b + 0x2f05458); return root ? find_w(root, "PlayerInventoryExpansionLayout", 0) : 0; }
 // 打开时把控件指针缓存下来（面板活着期间不变），每帧重排只读宽度、写位置。整组带界面代号 ui_gen（dm_cursor.h）：代号变了且物品栏面板已不在界面树上 = 重建过，整组作废，
 // 清单当作已关、不碰旧控件（w_stale；切布局 / 切语言 / 面板卸载都会重建，旧控件已释放）
@@ -504,6 +506,7 @@ static void job_stop(const char *why, int red) {
 static int item_panel_open(uint8_t *b) { return inv_panel(b) || *(uint8_t *)(b + 0x2d5ff60); }   // 物品栏或储藏箱开着：光标上拿着东西而没有物品面板时，客户端会自己发 0x17 把它丢到地上（Mac 宿主实测） | Inventory panel or stash open: when something is on the cursor with no item panel, the client sends 0x17 by itself and drops it on the ground (measured on the Mac host)
 static void job_start(uint8_t *b, int row) {
     if (g_job.st || row < 0 || row >= g_list.n || !g_list.c[row].ok) return;
+    if (dm_itemgen_busy()) { LOG("符文之语：一键配装进行中，先不合成"); return; }   // 两边都动光标 | both use the cursor
     uint64_t it = unit_item(b, g_list.base), pl = player(b), t = it ? tables(b, it) : 0; int hw, hh;
     // 预检（一切能失败的条件都在拿第一颗之前核完）：底材还在、孔仍全空、仍匹配（重算清单）、这一行仍可做、底材在能镶的位置、光标空、物品面板开着、每颗符文都排到了来源
     // Pre-check (every condition that can fail is checked before picking up the first rune): base item still there, sockets still all empty, still matches (list recomputed), this row still craftable, base item in a socketable location, cursor empty, item panel open, every rune has a source assigned
@@ -657,8 +660,10 @@ void dm_runeword_on_uimsg(const char *cat, const char *act, const char *arg) {  
 static _Atomic uint64_t g_auto;   // 底材 id << 32 | 表行 + 1；0 = 没有 | base id << 32 | table row + 1; 0 = none
 void dm_runeword_auto(uint32_t base_id, int rec) { atomic_store(&g_auto, (uint64_t)base_id << 32 | (uint32_t)(rec + 1)); }
 int dm_runeword_auto_pending(void) { return atomic_load(&g_auto) != 0; }
+int dm_runeword_inv_open(void) { return atomic_load(&g_inv_open); }   // 一键配装（dm_itemgen.c）要物品栏开着：光标上过手的东西客户端才不会自己丢地上 | one-click loadout (dm_itemgen.c) needs the inventory open, so the client does not drop what passes through the cursor
+int dm_runeword_busy(void) { return g_job.st != 0 || atomic_load(&g_auto) != 0; }   // 一键合成进行中或有待合成：一键配装不开工（两边都动光标） | one-tap crafting running or pending: the loadout does not start (both use the cursor)
 static void auto_pump(uint8_t *b) {
-    uint64_t a = atomic_load(&g_auto); if (!a || g_job.st || g_list.open || !item_panel_open(b)) return;
+    uint64_t a = atomic_load(&g_auto); if (!a || g_job.st || g_list.open || !item_panel_open(b) || dm_itemgen_busy()) return;
     uint32_t base = (uint32_t)(a >> 32); int rec = (int)(uint32_t)a - 1; uint64_t it = unit_item(b, base);
     if (!it) { static int miss; if (++miss < 300) return; miss = 0; atomic_store(&g_auto, 0); LOG("符文之语：自动合成找不到底材 id %u，放弃", base); return; }
     atomic_store(&g_auto, 0);
