@@ -34,7 +34,7 @@ static const struct { int cls; const char *key; } k_boss[DM_SUM_NBOSS] = {
 
 static _Atomic int g_req_boss = -1, g_req_n, g_req_clear, g_req_op, g_req_arg, g_god, g_infmp, g_alive;
 static uint8_t *B;
-static uint32_t g_ids[MAX_KEEP]; static int g_nids;   // 我们刷出来的单位 id（服务端线程独占） | unit ids we spawned (owned by the server thread)
+static uint32_t g_ids[MAX_KEEP]; static int g_hp[MAX_KEEP], g_nids;   // 我们刷出来的单位 id 与上一拍的生命（×256；服务端线程独占） | unit ids we spawned and their life on the previous tick (×256; owned by the server thread)
 static uint64_t g_G;                                  // 换局（游戏对象变了）就清名单 | a new run (the game object changed) clears the list
 
 void dm_summon_request(int boss, int count) { if (boss < 0 || boss >= DM_SUM_NBOSS) return; if (count < 1) count = 1; if (count > 10) count = 10; atomic_store(&g_req_n, count); atomic_store(&g_req_boss, boss); }
@@ -53,6 +53,9 @@ static int unit_xy(uint64_t u, int *x, int *y) { uint64_t p = rd(u + 0x38); if (
 static uint64_t find_unit(uint64_t G, uint32_t id) { for (int b = 0; b < 128; b++) for (uint64_t u = rd(G + 0x2230 + 0x400 + 8 * b); u; u = rd(u + 0x158)) if (*(uint32_t *)(uintptr_t)(u + 8) == id) return u; return 0; }
 static int gs(uint64_t u, int st) { return ((int (*)(uint64_t, int, int))(B + 0x5b9290))(u, st, 0); }
 static void ss(uint64_t u, int st, int v) { ((void (*)(uint64_t, int, int, int))(B + 0x5bc1f0))(u, st, v, 0); }
+// 属性的基础项（同 dm_rift.c gsb：ss 写的是基础数组，读合计再写回会把加成乘两遍） | base entry of a stat (same as dm_rift.c gsb: ss writes the base array, so reading the total and writing it back multiplies bonuses twice)
+static int gsb(uint64_t u, int st) { uint64_t sl = rd(u + 0x88); const uint32_t *a = sl ? (const uint32_t *)(uintptr_t)rd(sl + 0x30) : NULL; uint64_t n = sl ? rd(sl + 0x38) : 0;
+    if (!a || n > 4096) return 0; for (uint64_t i = 0; i < n; i++) if (a[i * 2] == (uint32_t)st << 16) return (int)a[i * 2 + 1]; return 0; }
 static uint64_t free_spot(uint64_t G, uint64_t room, int32_t pos[2]) { uint64_t out = 0; ((void (*)(uint64_t, uint64_t, int32_t *, int, int, uint64_t *, int, int))(B + 0x7160d0))(G, room, pos, 3, 0x400, &out, 4, 100); return out; }
 static int alive(uint64_t u) { uint32_t m = *(uint32_t *)(uintptr_t)(u + 0xc); return m != 0 && m != 12; }   // 模式 0 正在死、12 已死 | mode 0 dying, 12 dead
 static int in_town(int lv) { return lv == 1 || lv == 40 || lv == 75 || lv == 103 || lv == 109; }
@@ -78,7 +81,7 @@ static uint64_t pet_slot(uint64_t G, uint64_t player) {
 static int is_pet(uint64_t slot, uint32_t id) { int k = 0; for (uint64_t nd = rd(slot); nd && k < 256; nd = rd(nd + 0x18), k++) if (*(uint32_t *)(uintptr_t)(nd + 4) == id) return 1; return 0; }
 static int to_minion(uint64_t G, uint64_t player, uint64_t u) {
     int32_t *seq = (int32_t *)(uintptr_t)(G + 0x16c); int link = *seq == 0x7fffffff ? 1 : *seq + 1; *seq = link;
-    uint32_t id = *(uint32_t *)(uintptr_t)(u + 8);
+    uint32_t id = *(uint32_t *)(uintptr_t)(u + 8); int lv0 = gs(u, 12), mx0 = gsb(u, 7), full0 = gs(u, 7);
     int r = ((int (*)(uint64_t, uint64_t, uint64_t, int, int, int, int))(B + 0x7aa190))(G, player, u, BIND_SKILL, BIND_LEVEL, link, 1) & 1;
     // 原版只在返回值上说「接受了」，挂没挂进宠物表不查（上限 0 时会直接清掉新目标）：按 id 回查宠物表才算数
     // The original's return value only says "accepted"; it does not check whether the pet table entry took (with a cap of 0 it clears the new target outright): it only counts after looking the id up in the pet table
@@ -86,6 +89,15 @@ static int to_minion(uint64_t G, uint64_t player, uint64_t u) {
     if (in && find_unit(G, id) == u) {   // 原版施法成功后的两处收尾（0x7ab948–0x7ab970）照做 | the two follow-ups after a successful original cast (0x7ab948–0x7ab970), done the same
         *(uint32_t *)(uintptr_t)(u + 0x124) |= 0x800; uint64_t md = rd(u + 0x10); if (md) *(uint16_t *)(uintptr_t)(md + 0x30) |= 8; }
     LOG("召唤：束缚 id %u → 返回 %d、宠物表%s；该类型 数量 %d 上限 %d", id, r, in ? "有" : "没有", slot ? *(int32_t *)(uintptr_t)(slot + 8) : -1, slot ? *(int32_t *)(uintptr_t)(slot + 0xc) : -1);
+    // 束缚会按技能算式重算生命上限、把等级压到主人等级（0x7aa684 初始化块、0x79c130）：首领打一只怪就死（真机实测）。束缚完把等级、生命上限的基础项改回刷出时的值，再回满
+    // Binding recomputes maximum life from the skill formulas and brings the level down to the owner's (init block at 0x7aa684, 0x79c130): the boss died after fighting one monster (measured on device). After binding, set the level and the base of maximum life back to their spawn values, then refill
+    if (in && find_unit(G, id) == u) {
+        int lv1 = gs(u, 12), mx1 = gsb(u, 7), full1 = gs(u, 7);
+        if (lv1 < lv0) ss(u, 12, lv0);
+        if (mx0 > 0 && gsb(u, 7) < mx0) ss(u, 7, mx0);
+        ss(u, 6, gs(u, 7));
+        LOG("召唤：id %u 刷出时 等级 %d 生命上限 %d（基础 %d）→ 束缚后 等级 %d 上限 %d（基础 %d）→ 改回后 等级 %d 上限 %d 当前 %d", id, lv0, full0 >> 8, mx0 >> 8, lv1, full1 >> 8, mx1 >> 8, gs(u, 12), gs(u, 7) >> 8, gs(u, 6) >> 8);
+    }
     return in;
 }
 
@@ -101,7 +113,7 @@ static void summon(uint64_t G, uint64_t player, int boss, int n) {
         if (!u) continue; ok++;
         *(uint32_t *)(uintptr_t)(u + 0x124) |= 0x20000;   // 不掉落：死了不出宝，也防清除时爆一地 | no drop: nothing on death, and no loot shower when cleared
         int c = to_minion(G, player, u); conv += c;
-        g_ids[g_nids++] = *(uint32_t *)(uintptr_t)(u + 8);
+        g_hp[g_nids] = gs(u, 6); g_ids[g_nids++] = *(uint32_t *)(uintptr_t)(u + 8);
         LOG("召唤：%s（类号 %d）id %u 在 %d,%d（玩家 %d,%d）→ 转随从%s", k_boss[boss].key, k_boss[boss].cls, *(uint32_t *)(uintptr_t)(u + 8), pos[0], pos[1], px, py, c ? "成" : "败");
     }
     char msg[160]; snprintf(msg, sizeof msg, dm_str(B, "dmSumDone"), dm_str(B, k_boss[boss].key), ok); dm_game_notice(B, ok ? msg : dm_str(B, "dmSumNoRoom"));
@@ -151,6 +163,14 @@ void dm_summon_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
         if (atomic_load(&g_god)) { int mx = gs(player, 7); if (gs(player, 6) < mx) ss(player, 6, mx); }
         if (atomic_load(&g_infmp)) { int mx = gs(player, 9); if (gs(player, 8) < mx) ss(player, 8, mx); mx = gs(player, 11); if (gs(player, 10) < mx) ss(player, 10, mx); }
     }
-    int n = 0, w = 0; for (int i = 0; i < g_nids; i++) { uint64_t u = find_unit(G, g_ids[i]); if (u && alive(u)) { g_ids[w++] = g_ids[i]; n++; } }   // 死了的、走远被卸载的都从名单去掉 | drop the dead and those unloaded far away from the list
+    // 名单：死了的、走远被卸载的去掉。读数：每 50 拍（2 秒）一行各只的生命；见到死了打一行（上一拍生命、上限、模式），查「随从自己死了」用
+    // List: drop the dead and those unloaded far away. Readout: one line with each one's life every 50 ticks (2 s); one line on seeing a death (life on the previous tick, maximum, mode), for tracking down "the minion died by itself"
+    uint32_t t = *(uint32_t *)(uintptr_t)(G + 0x170); int n = 0, w = 0; char line[600]; int lo = 0; line[0] = 0;
+    for (int i = 0; i < g_nids; i++) { uint32_t id = g_ids[i]; uint64_t u = find_unit(G, id);
+        if (!u) { LOG("召唤：id %u 不在单位表了（卸载或被回收），上一拍生命 %d", id, g_hp[i] >> 8); continue; }
+        if (!alive(u)) { LOG("召唤：id %u 死了：上一拍生命 %d、上限 %d、等级 %d、模式 %u、+0x124 %#x", id, g_hp[i] >> 8, gs(u, 7) >> 8, gs(u, 12), *(uint32_t *)(uintptr_t)(u + 0xc), *(uint32_t *)(uintptr_t)(u + 0x124)); continue; }
+        int hp = gs(u, 6); if (t % 50 == 0 && lo < (int)sizeof line - 60) lo += snprintf(line + lo, sizeof line - lo, " [id %u 生命 %d/%d 等级 %d]", id, hp >> 8, gs(u, 7) >> 8, gs(u, 12));
+        g_hp[w] = hp; g_ids[w++] = id; n++; }
+    if (lo) LOG("召唤：在场%s", line);
     g_nids = w; atomic_store(&g_alive, n);
 }
