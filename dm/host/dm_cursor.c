@@ -1,5 +1,6 @@
 #include "dm_elysium.h"
 #include "dm_cursor.h"
+#include "../ios/tools/big_inventory.h"
 #include "dm_custom.h"
 #include "dm.h"
 #include "dm_uiscreen.h"
@@ -224,6 +225,20 @@ static int belt_row_block(module_t *m, int x, int y) {
         if (c && nm && !strncmp(nm, "slot_", 5) && *(uint8_t *)(c + 0x50) && (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)c + 0x48))(c, xy) & 1)) return 0; }
     return ((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)b + 0x48))(b, xy) & 1;
 }
+// Bag cellSize is overridden locally; other containers retain their original pitch.
+static double ui_cell_pitch(uint64_t widget, int vh) {
+    double pitch = 112.5;
+#if BIG_INV
+    const char *name = widget ? (const char *)*(uint64_t *)(widget + 8) : NULL;
+    if (name && !strcmp(name, "grid")) {
+        for (uint64_t parent = widget, depth = 0; parent && depth < 16; parent = *(uint64_t *)(parent + 0x30), depth++) {
+            const char *pn = (const char *)*(uint64_t *)(parent + 8);
+            if (pn && (!strcmp(pn, "PlayerInventoryExpansionLayout") || !strcmp(pn, "PlayerInventoryOriginalLayout"))) { pitch *= 2.0 / 3.0; break; }
+        }
+    }
+#endif
+    return pitch * vh / 2160.0;
+}
 static void origin_note(module_t *m, int x, int y) {
     dm_hud_info hi; dm_hud_get(&hi); if (hi.valid && hi.holding) return;   // 手上已有东西：这下是放下，不是拿起 | Something is already in hand: this press is a put-down, not a pick-up
     dm_cursor_item_info ci; uint64_t w = dm_wref_get(&g_down); atomic_store(&g_origin_xy, 0);
@@ -237,7 +252,7 @@ static void origin_note(module_t *m, int x, int y) {
     while (y0 > 1 && ORG_HIT(x, y0 - 2)) y0 -= 2; while (y1 < vh - 2 && ORG_HIT(x, y1 + 2)) y1 += 2;
     int ox = (x0 + x1) / 2, oy = (y0 + y1) / 2;   // 装备位：整个槽的中心 | Equipment slot: center of the whole slot
     if (ci.container == DM_ITEM_AT_BELT) { int cw = (x1 - x0) / 4; if (cw > 0) { int c = (x - x0) / cw, r = (y - y0) / cw; ox = x0 + c * cw + cw / 2; oy = y0 + r * cw + cw / 2; if (oy > y1) oy = (y0 + y1) / 2; } }
-    else if (ci.container != DM_ITEM_AT_EQUIP && ci.gw > 0 && ci.gh > 0) { double cell = 112.5 * vh / 2160.0; int cols = (int)lround((x1 - x0) / cell), rows = (int)lround((y1 - y0) / cell);
+    else if (ci.container != DM_ITEM_AT_EQUIP && ci.gw > 0 && ci.gh > 0) { double cell = ui_cell_pitch(w, vh); int cols = (int)lround((x1 - x0) / cell), rows = (int)lround((y1 - y0) / cell);
         if (cols > 0 && rows > 0) { ox = x0 + (int)((ci.gx + ci.gw / 2.0) * (x1 - x0) / cols); oy = y0 + (int)((ci.gy + ci.gh / 2.0) * (y1 - y0) / rows); } }
     atomic_store(&g_origin_xy, (1ull << 63) | (uint64_t)(uint32_t)ox | ((uint64_t)(uint32_t)oy << 32));
 }
@@ -1217,9 +1232,9 @@ static void slot_center(uint64_t w, int *x, int *y, int vw, int vh, int cells) {
 #define SLOT_HIT(px, py) (((int (*)(uint64_t, uint64_t))fn)(w, (uint64_t)(uint32_t)(px) | ((uint64_t)(uint32_t)(py) << 32)) & 1)
     while (x0 > 2 && SLOT_HIT(x0 - 3, *y)) x0 -= 3; while (x1 < vw - 3 && SLOT_HIT(x1 + 3, *y)) x1 += 3;
     while (y0 > 2 && SLOT_HIT(*x, y0 - 3)) y0 -= 3; while (y1 < vh - 3 && SLOT_HIT(*x, y1 + 3)) y1 += 3;
-    // 多格的区域（背包 / 箱子 / 魔盒）：取落点所在那一格的格心（格距 112.5 单位）；单格的（装备槽、腰带格）就是整块的中心
-    // Multi-cell areas (inventory / stash / cube): take the center of the cell containing the drop point (cell pitch 112.5 units); single-cell ones (equipment slots, belt cells) use the center of the whole block
-    double cell = 112.5 * vh / 2160.0; int cols = (int)lround((x1 - x0) / cell), rows = (int)lround((y1 - y0) / cell);
+    // 多格的区域（背包 / 箱子 / 魔盒）：取落点所在那一格的格心（背包格距 75、其他 112.5 单位）；单格的（装备槽、腰带格）就是整块的中心
+    // Multi-cell areas use their own cell pitch (bag 75, stash/cube 112.5 units); single-cell ones (equipment slots, belt cells) use the center of the whole block
+    double cell = ui_cell_pitch(w, vh); int cols = (int)lround((x1 - x0) / cell), rows = (int)lround((y1 - y0) / cell);
     if (!cells) cols = rows = 1;
     // 多格区域：落点就用物品画着的那个点（游戏以光标为中心放），只收进区域边界内 3 像素。光标现在能精确落位：
     // 取格心时 2×2 的物品正好压在四格交点的一侧，往哪边取整不由玩家看到的位置决定（盾放回箱子压到旁边的头盔上、成了交换）
@@ -1244,9 +1259,9 @@ static int g_press_stack;   // 最近一次按下命中的是高级仓库的成�
 static _Atomic int g_vault_drop;   // 最后一次落点查询落在编年史页上时手上那件的 id（否则 0） | id of the held item when the last drop-point query landed on the chronicle page (otherwise 0)
 int dm_ui_vault_drop(void) { return atomic_load(&g_vault_drop); }
 // 视口像素点在物品栏背包格（PlayerInventoryExpansionLayout 的 grid）上：给出它在格里的位置（格为单位 × 100）与格子的列数、行数（编年史拖回背包用）。
-// 边界用格子控件自己的命中函数二分探（同 slot_center），格距 112.5 单位（按 2160 高折算）
+// 边界用格子控件自己的命中函数二分探（同 slot_center），格距随背包构建开关缩小（按 2160 高折算）
 // A viewport pixel point on the inventory grid of the inventory panel (the grid of PlayerInventoryExpansionLayout): gives its position within the grid (in cells × 100) and the grid's column and row counts (used for dragging from the chronicle back to the inventory).
-// The bounds are binary-searched with the grid widget's own hit-test function (same as slot_center); cell pitch 112.5 units (scaled for a 2160 height)
+// The bounds use the grid widget's hit-test function; bag pitch follows BIG_INV (scaled for a 2160 height)
 int dm_ui_bag_point(int x, int y, int *fx100, int *fy100, int *cols, int *rows) {
     module_t *m = main_module(); if (!m) return 0; uint64_t root = 0; memcpy(&root, m->base + 0x2f05458, 8);
     int32_t vw = *(int32_t *)(m->base + 0x211da38), vh = *(int32_t *)(m->base + 0x211da3c); uint64_t pn = root ? ui_panel(root, "PlayerInventoryExpansionLayout") : 0, g = pn ? ui_find(pn, "grid", 0) : 0;
@@ -1260,7 +1275,7 @@ int dm_ui_bag_point(int x, int y, int *fx100, int *fy100, int *cols, int *rows) 
     for (a = 0, b = y; a < b;) { int mid = (a + b) / 2; if (BAG_HIT(x, mid)) b = mid; else a = mid + 1; } y0 = a;
     for (a = y, b = vh - 1; a < b;) { int mid = (a + b + 1) / 2; if (BAG_HIT(x, mid)) a = mid; else b = mid - 1; } y1 = a;
 #undef BAG_HIT
-    double cell = 112.5 * vh / 2160.0; *cols = (int)lround((x1 - x0 + 1) / cell); *rows = (int)lround((y1 - y0 + 1) / cell);
+    double cell = ui_cell_pitch(g, vh); *cols = (int)lround((x1 - x0 + 1) / cell); *rows = (int)lround((y1 - y0 + 1) / cell);
     *fx100 = (int)lround((x - x0) * 100.0 / cell); *fy100 = (int)lround((y - y0) * 100.0 / cell); return *cols > 0 && *rows > 0;
 }
 // 佣兵面板里还没解锁的六个新装备格（项链 2、戒指 6 / 7、腰带 8、鞋 9、手套 10；秘境最高通关不到 10 层）：点中 / 拖到就弹一句提示（dm_rift.c，半秒内不重复）。

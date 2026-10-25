@@ -18,6 +18,7 @@ from PIL import Image
 TOOLS = Path(__file__).resolve().parent.parent / 'tools'
 sys.path.insert(0, str(TOOLS))
 import gen_assets
+import big_inventory
 
 # The contracts below do not read a RomFS or load the native texture conversion library.
 spec = importlib.util.spec_from_file_location('native_art_generator_contract', TOOLS / 'native_art/generate.py')
@@ -144,6 +145,9 @@ class ModeCache(unittest.TestCase):
         self.calls.append(overlay_only)
         v4 = self.output / 'NativeHUD/v4'
         files = [v4 / 'base.png', v4 / 'hud.json', v4 / 'hud_v4_ui/ui.json']
+        if big_inventory.enabled():
+            files += [self.output / 'NativeHUD/biginv' / (name + '.sprite')
+                      for name in big_inventory.SPRITES]
         silhouette = v4 / 'hud_v4_ui/sil_dm_native_skill_0.png'
         if overlay_only:
             # The HUD generator clears this directory before filling the requested output set.
@@ -167,6 +171,10 @@ class ModeCache(unittest.TestCase):
             self.assertTrue(gen_assets.ensure(str(self.romfs)))
             self.assertFalse(gen_assets.ensure(str(self.romfs)))
             full_stamp = (self.output / '.stamp').read_text()
+            # Full output is a superset: an overlay request reuses it. Only an
+            # incomplete full output forces regeneration at overlay scope.
+            self.assertFalse(gen_assets.ensure(str(self.romfs), overlay_only=True))
+            (self.output / 'NativeHUD/v4/hud_v4_ui/sil_dm_native_skill_0.png').unlink()
             self.assertTrue(gen_assets.ensure(str(self.romfs), overlay_only=True))
             overlay_stamp = (self.output / '.stamp').read_text()
             self.assertNotEqual(full_stamp, overlay_stamp)
@@ -181,6 +189,14 @@ class ModeCache(unittest.TestCase):
             (self.output / 'NativeHUD/v4/hud_v4_ui/sil_dm_native_skill_0.png').unlink()
             self.assertTrue(gen_assets.ensure(str(self.romfs)))
         self.assertEqual(self.calls, [False, False])
+
+    def test_missing_bag_art_invalidates_cache(self):
+        with mock.patch.object(big_inventory, 'enabled', return_value=True), \
+                mock.patch.object(gen_assets, 'run_steps', side_effect=self.fake_generate):
+            self.assertTrue(gen_assets.ensure(str(self.romfs), overlay_only=True))
+            (self.output / 'NativeHUD/biginv/inventorybg.sprite').unlink()
+            self.assertTrue(gen_assets.ensure(str(self.romfs), overlay_only=True))
+        self.assertEqual(self.calls, [True, True])
 
     def test_failed_generation_never_marks_cache_fresh_and_releases_lock(self):
         with mock.patch.object(gen_assets, 'run_steps', side_effect=SystemExit('broken source')):
