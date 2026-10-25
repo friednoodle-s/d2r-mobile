@@ -571,7 +571,14 @@ void dm_itemgen_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
     lv_apply();
     rw_post(G, player);
     { static int t = -1; if (t < 0) t = getenv("DM_TEST_LOADOUT") != NULL;   // 云端自动测试：物品栏一开就点一次一键配装 | cloud test run: tap the loadout once as soon as the inventory is open
-      if (t == 1 && J.st == LO_IDLE && dm_runeword_inv_open()) { t = 2; LOG("DM_TEST_LOADOUT：物品栏开着 → 点一键配装"); dm_itemgen_loadout(); } }
+      if (t == 1 && J.st == LO_IDLE && dm_runeword_inv_open()) {
+          // DM_TEST_LOADOUT=empty：先把背包里的东西全丢到脚下，测试从空背包起跑（只在云端测试副本上用）
+          // DM_TEST_LOADOUT=empty: first drop everything in the inventory at the feet, so the test starts from an empty inventory (cloud test copies only)
+          if (!strcmp(getenv("DM_TEST_LOADOUT"), "empty")) { uint32_t ids[128]; int n = 0, x, y, k = 0;
+              for (uint64_t it = inv_first(player); it && n < 128 && k++ < 1024; ) { uint64_t d = rd(it + 0x10); if (!d) break; if (cell_of(it, &x, &y)) ids[n++] = *(uint32_t *)(uintptr_t)(it + 8); it = rd(d + 0xb0); }
+              for (int i = 0; i < n; i++) { uint64_t it = own_item(player, ids[i]); if (it && cell_of(it, &x, &y)) { pk_grid(G, player, 0x19, ids[i], x, y, 0); if (cursor_item(player)) drop_cursor(G, player, cursor_item(player)); } }
+              LOG("DM_TEST_LOADOUT：背包 %d 件丢到脚下", n); }
+          t = 2; LOG("DM_TEST_LOADOUT：物品栏开着 → 点一键配装"); dm_itemgen_loadout(); } }
     lo_tick(G, player);
     if (J.st != LO_IDLE) return;   // 配装进行中不接单件请求 | no single-item requests while a loadout runs
     int r = atomic_exchange(&g_req, -1); if (r < 0) return;
