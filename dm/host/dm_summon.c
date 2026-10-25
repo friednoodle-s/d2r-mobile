@@ -355,6 +355,13 @@ static void test_acts(uint64_t G, uint64_t player) {
         LOG("DM_TEST_ACTS：施放技能 %d（节点 %s）在 %d,%d（玩家 %d,%d）→ 返回 %d，模式 %u → %u", x, node ? "有" : "【红】没有", px + dx, py + dy, px, py, r, pm, *(uint32_t *)(uintptr_t)(player + 0xc)); }
     else if (!strncmp(a, "pos", 3)) { uint64_t pp = rd(player + 0x38); LOG("DM_TEST_ACTS：玩家位置 %d,%d 模式 %u 生命上限 %d 法力上限 %d 属性 97/54 %d 97/149 %d", pp ? *(uint16_t *)(uintptr_t)(pp + 2) : -1, pp ? *(uint16_t *)(uintptr_t)(pp + 6) : -1,
         *(uint32_t *)(uintptr_t)(player + 0xc), gs(player, 7) >> 8, gs(player, 9) >> 8, ((int (*)(uint64_t, int, int))(B + 0x5b9290))(player, 97, 54), ((int (*)(uint64_t, int, int))(B + 0x5b9290))(player, 97, 149)); }
+    else if (!strncmp(a, "bag", 3)) {   // 背包页每件的格子与占格，看扩容后的格子有没有被用上 | each inventory-page item's cell and size, to see whether the expanded cells get used
+        uint64_t c = rd(player + 0x90); uint64_t it = c && *(uint32_t *)(uintptr_t)c == 0x01020304 ? rd(c + 0x10) : 0; int n = 0, mx = -1, my = -1, k = 0; char line[700]; int lo = 0; line[0] = 0;
+        for (; it && k < 1024; k++) { uint64_t d = rd(it + 0x10), pp = rd(it + 0x38); if (!d) break;
+            if (*(uint32_t *)(uintptr_t)(it + 0xc) == 0 && *(uint8_t *)(uintptr_t)(d + 0x55) == 0 && pp) { int ix = *(int32_t *)(uintptr_t)(pp + 0x10), iy = *(int32_t *)(uintptr_t)(pp + 0x14); n++; if (ix > mx) mx = ix; if (iy > my) my = iy;
+                if (lo < (int)sizeof line - 24) lo += snprintf(line + lo, sizeof line - lo, " %d,%d", ix, iy); }
+            it = rd(d + 0xb0); }
+        LOG("DM_TEST_ACTS：背包 %d 件，最大列 %d 最大行 %d；格子：%s", n, mx, my, line); }
     else if (!strncmp(a, "stat", 4)) LOG("DM_TEST_ACTS：玩家 等级 %d 经验 %d 金币 %d/%d 生命 %d/%d 法力 %d/%d 属性点 %d 技能点 %d 召唤 %d 只", gs(player, 12), gs(player, 13), gs(player, 14), gs(player, 15),
         gs(player, 6) >> 8, gs(player, 7) >> 8, gs(player, 8) >> 8, gs(player, 9) >> 8, gs(player, 4), gs(player, 5), dm_summon_alive());
 }
