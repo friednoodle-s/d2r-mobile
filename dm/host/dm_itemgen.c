@@ -49,21 +49,28 @@ static _Atomic int g_nolv = 1;   // 装备免等级需求（界面记住玩家�
 void dm_itemgen_set_nolevel(int on) { atomic_store(&g_nolv, on != 0); }
 int dm_itemgen_nolevel(void) { return atomic_load(&g_nolv); }
 
-// 符文之语清单：每条一行；能上盾、清单挑的底材又不是盾的（如精神挑了剑、巨龙挑了铠甲），另加一行「盾」版，底材统一用君主盾 uit（4 孔、全职业）
-// Runeword list: one row each; for those allowed on shields whose chosen base is not a shield (e.g. Spirit picked a sword, Dragon an armor), an extra "shield" row is added, always on a Monarch uit (4 sockets, all classes)
-#define SHIELD_BASE "uit "
-static struct { int16_t rw; uint8_t shield; } g_rwl[2 * DM_RUNEWORDS_COUNT]; static int g_nrwl;
+// 符文之语清单：每条一行（底材是清单按「精英、需求等级最高」挑的，武器常挑到双手的），另加两种变体行：
+//   盾：能上盾、挑的底材又不是盾的（如精神挑了剑、巨龙挑了铠甲），底材用君主盾 uit（4 孔、全职业）；
+//   单手：能上剑 / 近战 / 任意武器、没有排除类型的，底材用幻化之刃 7cr（单手剑、6 孔），好配盾（如正义之手、战争召唤）
+// Runeword list: one row each (the list picked the base as "elite, highest required level", which for weapons is often two-handed), plus two kinds of variant rows:
+//   shield: allowed on shields while the chosen base is not a shield (e.g. Spirit picked a sword, Dragon an armor), on a Monarch uit (4 sockets, all classes);
+//   one-handed: allowed on swords / melee / any weapon with no excluded types, on a Phase Blade 7cr (one-handed sword, 6 sockets), to pair with a shield (e.g. Hand of Justice, Call to Arms)
+static const char *const k_var_base[] = { NULL, "uit ", "7cr " };
+static struct { int16_t rw; uint8_t var; } g_rwl[3 * DM_RUNEWORDS_COUNT]; static int g_nrwl;
 static void rwl_build(void) {
     if (g_nrwl) return; int n = 0;
-    for (int i = 0; i < DM_RUNEWORDS_COUNT; i++) { const dm_runeword_t *w = &dm_runewords[i]; int shld = 0;
-        g_rwl[n].rw = (int16_t)i; g_rwl[n++].shield = 0;
-        for (int k = 0; k < 6; k++) if (w->itype[k] && !strcmp(w->itype[k], "shld")) shld = 1;
-        if (shld && w->nsock >= 1 && w->nsock <= 4 && memcmp(w->base, SHIELD_BASE, 4)) { g_rwl[n].rw = (int16_t)i; g_rwl[n++].shield = 1; } }
+    for (int i = 0; i < DM_RUNEWORDS_COUNT; i++) { const dm_runeword_t *w = &dm_runewords[i]; int shld = 0, wpn = 0, ex = 0;
+        g_rwl[n].rw = (int16_t)i; g_rwl[n++].var = DM_RW_PICKED;
+        for (int k = 0; k < 6; k++) if (w->itype[k]) { shld |= !strcmp(w->itype[k], "shld"); wpn |= !strcmp(w->itype[k], "weap") || !strcmp(w->itype[k], "mele") || !strcmp(w->itype[k], "swor"); }
+        for (int k = 0; k < 3; k++) ex |= w->etype[k] && *w->etype[k];
+        if (shld && w->nsock >= 1 && w->nsock <= 4 && memcmp(w->base, k_var_base[DM_RW_SHIELD], 4)) { g_rwl[n].rw = (int16_t)i; g_rwl[n++].var = DM_RW_SHIELD; }
+        if (wpn && !ex && w->nsock >= 1 && w->nsock <= 6 && memcmp(w->base, k_var_base[DM_RW_ONEHAND], 4)) { g_rwl[n].rw = (int16_t)i; g_rwl[n++].var = DM_RW_ONEHAND; } }
     g_nrwl = n;
 }
-static const dm_runeword_t *rwl(int i, int *shield) { rwl_build(); *shield = g_rwl[i].shield; return &dm_runewords[g_rwl[i].rw]; }
+static const dm_runeword_t *rwl(int i, int *var) { rwl_build(); *var = g_rwl[i].var; return &dm_runewords[g_rwl[i].rw]; }
+static const char *rw_base(const dm_runeword_t *w, int var) { return var ? k_var_base[var] : w->base; }
 int dm_itemgen_count(int kind) { if (kind == DM_ITEM_RUNEWORD) rwl_build(); return kind == DM_ITEM_UNIQUE ? DM_UNIQUE_ITEMS_COUNT : kind == DM_ITEM_SET ? DM_SET_ITEMS_COUNT : kind == DM_ITEM_RUNEWORD ? g_nrwl : 0; }
-int dm_itemgen_shield(int kind, int i) { int s = 0; if (kind == DM_ITEM_RUNEWORD && i >= 0 && i < dm_itemgen_count(kind)) rwl(i, &s); return s; }
+int dm_itemgen_variant(int kind, int i) { int v = DM_RW_PICKED; if (kind == DM_ITEM_RUNEWORD && i >= 0 && i < dm_itemgen_count(kind)) rwl(i, &v); return v; }
 const char *dm_itemgen_name(int kind, int i) {
     if (i < 0 || i >= dm_itemgen_count(kind)) return ""; int zh = dm_lang_zh(), s;
     if (kind == DM_ITEM_UNIQUE) return zh ? dm_unique_items[i].name_zh : dm_unique_items[i].name_en;
@@ -75,7 +82,7 @@ const char *dm_itemgen_sub(int kind, int i) {
     if (kind == DM_ITEM_UNIQUE) snprintf(s, sizeof s, "%.4s · Lv %d · #%d", dm_unique_items[i].code, dm_unique_items[i].lvl_req, dm_unique_items[i].row);   // 行号区分同名的（彩虹魔石有 8 条） | the row tells same-named entries apart (Rainbow Facet has 8)
     else if (kind == DM_ITEM_SET && dm_lang_zh()) snprintf(s, sizeof s, "%s · Lv %d", dm_set_items[i].set_zh, dm_set_items[i].lvl_req);
     else if (kind == DM_ITEM_SET) snprintf(s, sizeof s, "%.4s · Lv %d", dm_set_items[i].code, dm_set_items[i].lvl_req);   // 套装名只有中文 | the set name is Chinese only
-    else { const dm_runeword_t *w = rwl(i, &sh); snprintf(s, sizeof s, "%.4s · %d", sh ? SHIELD_BASE : w->base, w->nsock); }
+    else { const dm_runeword_t *w = rwl(i, &sh); snprintf(s, sizeof s, "%.4s · %d", rw_base(w, sh), w->nsock); }
     return s;
 }
 int dm_itemgen_match(int kind, int i, const char *q) {   // 中英文名都比，英文不分大小写 | matches both Chinese and English names, English case-insensitively
@@ -189,7 +196,7 @@ static void spawn(uint64_t G, uint64_t player, int kind, int i) {
         if (!it || !d || *(int32_t *)(uintptr_t)d != q || *(int32_t *)(uintptr_t)(d + 0x34) != row) { snprintf(msg, sizeof msg, dm_str(B, "dmItemFail"), nm); dm_game_notice(B, msg); return; }
         snprintf(msg, sizeof msg, dm_str(B, in ? "dmItemDone" : "dmItemGround"), nm); dm_game_notice(B, msg); return;
     }
-    int sh; const dm_runeword_t *w = rwl(i, &sh); int n = w->nsock, rec = rt_row(G, kind, i); const char *bc = sh ? SHIELD_BASE : w->base;
+    int sh; const dm_runeword_t *w = rwl(i, &sh); int n = w->nsock, rec = rt_row(G, kind, i); const char *bc = rw_base(w, sh);
     if (n < 1 || !memcmp(bc, "    ", 4) || rec < 0) { snprintf(msg, sizeof msg, dm_str(B, "dmItemFail"), nm); dm_game_notice(B, msg); return; }
     uint64_t base = make_ready(G, player, bc, 2, -1, 0, n, &in);
     if (!base || gs(base, 194) != n || !in) { snprintf(msg, sizeof msg, dm_str(B, base && !in ? "dmItemNoRoom" : "dmItemFail"), nm); dm_game_notice(B, msg); return; }

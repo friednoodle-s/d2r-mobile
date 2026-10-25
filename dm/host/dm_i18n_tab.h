@@ -511,4 +511,5 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmItemFail", "没能生成 %s：详情在诊断日志", "Could not create %s: see the diagnostic log", "No se pudo crear %s: consulta el registro de diagnóstico", "No se pudo crear %s: consulta el registro de diagnóstico", "Не удалось создать %s: см. журнал диагностики", "%s을(를) 생성하지 못했습니다. 진단 로그를 확인하세요" },
     { "dmItemRwOpen", "%s 的底材和符文已放进背包：打开物品栏会自动镶成", "Base and runes for %s are in your inventory: open the inventory to socket them automatically", "La base y las runas de %s están en tu inventario: abre el inventario para engarzarlas automáticamente", "La base y las runas de %s están en tu inventario: abre el inventario para engarzarlas automáticamente", "Основа и руны для %s в инвентаре: откройте инвентарь, чтобы вставить их автоматически", "%s의 베이스와 룬이 인벤토리에 있습니다. 인벤토리를 열면 자동으로 장착됩니다" },
     { "dmItemShieldVar", "%@（盾）", "%@ (Shield)", "%@ (escudo)", "%@ (escudo)", "%@ (щит)", "%@ (방패)" },
+    { "dmItemOneHandVar", "%@（单手）", "%@ (One-Handed)", "%@ (a una mano)", "%@ (a una mano)", "%@ (одноручное)", "%@ (한손)" },
 };

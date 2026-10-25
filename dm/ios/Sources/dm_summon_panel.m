@@ -191,7 +191,8 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
         c.textLabel.textColor = UIColor.whiteColor; c.textLabel.font = [UIFont boldSystemFontOfSize:15]; c.detailTextLabel.textColor = [UIColor colorWithWhite:0.65 alpha:1]; c.detailTextLabel.font = [UIFont systemFontOfSize:12];
         c.selectedBackgroundView = [UIView new]; c.selectedBackgroundView.backgroundColor = [UIColor colorWithRed:0.55 green:0.42 blue:0.18 alpha:1]; }
     int kind = (int)_kindSeg.selectedSegmentIndex, i = _itemRows[(NSUInteger)ip.row].intValue;
-    c.textLabel.text = dm_itemgen_shield(kind, i) ? [NSString stringWithFormat:@(dm_ui("dmItemShieldVar")), @(dm_itemgen_name(kind, i))] : @(dm_itemgen_name(kind, i)); c.detailTextLabel.text = @(dm_itemgen_sub(kind, i));
+    int var = dm_itemgen_variant(kind, i); NSString *nm = @(dm_itemgen_name(kind, i));
+    c.textLabel.text = var == DM_RW_SHIELD ? [NSString stringWithFormat:@(dm_ui("dmItemShieldVar")), nm] : var == DM_RW_ONEHAND ? [NSString stringWithFormat:@(dm_ui("dmItemOneHandVar")), nm] : nm; c.detailTextLabel.text = @(dm_itemgen_sub(kind, i));
     return c;
 }
 - (void)tableView:(UITableView *)t didSelectRowAtIndexPath:(NSIndexPath *)ip {
