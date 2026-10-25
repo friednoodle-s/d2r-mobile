@@ -210,7 +210,10 @@ static int pick_up(uint64_t G, uint64_t player, uint64_t it) {
     memcpy(pk + 1, (void *)(uintptr_t)(it + 8), 4); memcpy(pk + 5, (void *)(uintptr_t)(ip + 0x10), 4); memcpy(pk + 9, (void *)(uintptr_t)(ip + 0x14), 4); memcpy(pk + 13, &one, 4);
     uint32_t *busy = (uint32_t *)(uintptr_t)(G + 0x19050), old = *busy; *busy = 1;
     ((void (*)(uint64_t, uint64_t, uint8_t *, uint32_t))(B + 0x6e5b40))(G, player, pk, 17); *busy = old;
-    return *(uint32_t *)(uintptr_t)(it + 0xc) == 0;
+    int ok = *(uint32_t *)(uintptr_t)(it + 0xc) == 0; uint64_t pp = rd(player + 0x38);
+    if (!ok) LOG("刷装备：捡起 id %u 没进背包（物品模式 %u 位置 %d,%d；玩家模式 %u 位置 %d,%d）", *(uint32_t *)(uintptr_t)(it + 8), *(uint32_t *)(uintptr_t)(it + 0xc),
+        *(int32_t *)(uintptr_t)(ip + 0x10), *(int32_t *)(uintptr_t)(ip + 0x14), *(uint32_t *)(uintptr_t)(player + 0xc), pp ? *(uint16_t *)(uintptr_t)(pp + 2) : -1, pp ? *(uint16_t *)(uintptr_t)(pp + 6) : -1);
+    return ok;
 }
 // 物品等级至少 99，也不低于目标行的物品等级（毁灭、地狱火炬是 110；原版指定生成要求物品等级 ≥ 行等级） | item level at least 99 and not below the target row's level (Annihilus and Hellfire Torch are 110; forced creation requires item level >= row level)
 // 整件重发给客户端：清掉「已鉴定」位再走一次原版鉴定 0x78acf0，它会置回这一位并自己广播物品更新（0x9c / 0x9d，见 diag.c 免费鉴定）
@@ -303,7 +306,7 @@ int dm_itemgen_busy(void) { return atomic_load(&g_lo_busy) == 1; }   // dm_runew
 enum { LO_IDLE, LO_MAKE, LO_SOCK, LO_SWITCH, LO_EQUIP, LO_BACK, LO_RWJOB };   // LO_RWJOB：符文之语交给一键合成镶（见 lo_rwjob） | LO_RWJOB: a runeword is socketed by one-tap crafting (see lo_rwjob)
 // 任务绑定这一局与这个角色（G、玩家 id），换局 / 换角色作废；resume = 背包满停下时的阶段，腾出空位再点接着做
 // The job is bound to this game and character (G, player id) and dropped on a change; resume = the phase it stopped in on a full inventory, continued on the next tap
-static struct { int st, i, k, nr, closed, nomerc, resume, backtry, cursor_warned; uint64_t G; uint32_t pid, base, rune[6]; } J;
+static struct { int st, i, k, nr, closed, nomerc, resume, backtry, cursor_warned, wait; uint64_t G; uint32_t pid, base, rune[6]; } J;
 
 static uint64_t affix_list(uint64_t it, int rw) {
     uint64_t M = ((uint64_t (*)(uint64_t, int, uint32_t))(B + 0x5bcf20))(it, rw ? 0xab : 0, rw ? 0 : 0x40);
@@ -538,6 +541,7 @@ static void lo_tick(uint64_t G, uint64_t pl) {
     J.closed = 0;
     if (J.st != LO_RWJOB && !clear_cursor(G, pl)) { if (!J.cursor_warned++) lo_notice("dmLoCursor", NULL); return; }   // 光标没空之前什么都不做（也不切武器组、不结束） | nothing else until the cursor is empty (no weapon switch, no finishing)
     J.cursor_warned = 0;
+    if (J.wait > 0) { J.wait--; return; }   // 穿完一件歇约 1 秒再生成下一件（云端测试：穿戴 / 丢旧件后紧接着捡新件会捡不起来） | rest about 1 s after equipping a piece (cloud test: picking up right after equipping / dropping failed)
     if (J.st != LO_BACK && J.i >= NLO) J.st = LO_BACK;
     const lo_piece_t *pc = J.st == LO_BACK ? NULL : &k_lo[J.i];
     switch (J.st) {
@@ -550,7 +554,7 @@ static void lo_tick(uint64_t G, uint64_t pl) {
         if (pc->merc) { if (lo_equip_merc(G, pl, pc)) { J.i++; J.st = LO_MAKE; } break; }
         if (pc->set2 && cur_set(pl) != 1) { J.st = LO_SWITCH; break; }
         if (!pc->set2 && cur_set(pl) == 1 && !switch_set(G, pl)) { lo_stop("dmLoFail", pc->what); break; }
-        if (lo_equip(G, pl, pc)) { J.i++; J.st = LO_MAKE; } break;
+        if (lo_equip(G, pl, pc)) { J.i++; J.st = LO_MAKE; J.wait = 25; } break;
     case LO_BACK:   // 切回主手组：角色正在出招时会被拒，最多等约 3 秒 | switch back to the primary set: refused while the character is mid-skill, wait up to about 3 s
         if (cur_set(pl) == 1 && !switch_set(G, pl) && ++J.backtry < 75) break;
         if (cur_set(pl) == 1) lo_notice("dmLoBackFail", NULL);
