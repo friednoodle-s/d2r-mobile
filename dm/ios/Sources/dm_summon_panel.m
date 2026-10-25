@@ -99,7 +99,7 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     _tabs.frame = CGRectMake(pad, pad, w - 2 * pad - 80, 34);
     [_panel viewWithTag:900].frame = CGRectMake(w - pad - 72, pad, 72, 34);
     [_panel viewWithTag:905].frame = CGRectMake(w - pad - 160, h - 18, 160, 14);
-    CGRect page = CGRectMake(pad, pad + 44, w - 2 * pad, h - 2 * pad - 44 - 8);   // 底下留出版本号那一行 | leave the version line free at the bottom _pageSummon.frame = page; _pageCheat.frame = page;
+    CGRect page = CGRectMake(pad, pad + 44, w - 2 * pad, h - 2 * pad - 44 - 8); _pageSummon.frame = page; _pageCheat.frame = page;   // 底下留出版本号那一行 | leave the version line free at the bottom
     CGFloat pw = page.size.width, bw = (pw - 2 * 8) / 3, bh = 44;
     for (int i = 0; i < DM_SUM_NBOSS; i++) _bossButtons[i].frame = CGRectMake((i % 3) * (bw + 8), (i / 3) * (bh + 8), bw, bh);
     CGFloat y = 2 * (bh + 8) + 4;
