@@ -1,4 +1,4 @@
-"""Retile only the bag's 490x196 pixel area; keep all other BC3 blocks exact.
+"""Generate either the legacy small bag or the full-cell 13x8 controller art.
 
 Single-level SpA1 v61 CPU addressing follows dm/gfx/tex/nvn_deswizzle.c.
 No compiler needed. Encoding reuses the existing wide-stash BC3 encoder.
@@ -21,7 +21,7 @@ def blocks(data):
     if data[:6] != b'SpA1\x3d\x00' or struct.unpack_from('<H', data, 20)[0] != 1:
         raise ValueError('big inventory art requires single-frame SpA1 v61')
     w, h = struct.unpack_from('<II', data, 8)
-    if (w, h) not in ((512, 700), (507, 700)) or data[22] != 3:
+    if not (0 < w <= 4096 and 0 < h <= 4096) or data[22] != 3:
         raise ValueError('unexpected inventory background geometry/format')
     pitch, rows = (w + 3) // 4 * 16, (h + 3) // 4
     th = data[23]
@@ -53,17 +53,17 @@ def retile(image):
     result = image.copy()
     left, top, right, bottom = BOX
     tile = image.crop((left, top, left + 49, top + 49))
-    for row in range(B.ROWS):
-        y0 = top + round(row * (bottom - top) / B.ROWS)
-        y1 = top + round((row + 1) * (bottom - top) / B.ROWS)
-        for col in range(B.COLS):
-            x0 = left + round(col * (right - left) / B.COLS)
-            x1 = left + round((col + 1) * (right - left) / B.COLS)
+    for row in range(6):
+        y0 = top + round(row * (bottom - top) / 6)
+        y1 = top + round((row + 1) * (bottom - top) / 6)
+        for col in range(15):
+            x0 = left + round(col * (right - left) / 15)
+            x1 = left + round((col + 1) * (right - left) / 15)
             result.paste(tile.resize((x1 - x0, y1 - y0), Image.Resampling.LANCZOS), (x0, y0))
     return result
 
 
-def generate(data):
+def generate_small(data):
     w, h, addresses = blocks(data)
     linear = G.bc3(retile(decode(data)))
     result = bytearray(data)
@@ -77,6 +77,79 @@ def generate(data):
     return bytes(result)
 
 
+# Measured controller sprite coordinates: ConsoleRightPanelRect is 1408x1486,
+# background is centered, originally (-508,-700), expanded (-674,-860).
+# One source pixel = two layout units. The shared outer frame already fits
+# the new grid (x=84..1358) and the lower controls (y < 1486).
+OLD_ORIGIN = (196, 43)
+NEW_ORIGIN = (30, -117)
+SIZE = (692, 792)  # Half-resolution MOD footprint, padded to whole BC3 blocks.
+SLOTS = {
+    'slot_head': (607, 59, 196, 196), 'slot_neck': (851, 221, 98, 98),
+    'slot_torso': (607, 281, 196, 294), 'slot_right_arm': (224, 186, 196, 392),
+    'slot_left_arm': (994, 188, 196, 392), 'slot_right_hand': (460, 603, 98, 98),
+    'slot_left_hand': (857, 603, 98, 98), 'slot_gloves': (224, 603, 196, 196),
+    'slot_feet': (994, 601, 196, 196), 'slot_belt': (606, 601, 196, 98),
+}
+
+
+def compose(image):
+    from PIL import Image
+    result = Image.new('RGBA', SIZE)
+    # Copy the ten original slot recesses including their six-pixel borders.
+    # Paperdoll silhouettes themselves remain game-drawn backgroundFilename.
+    for name, (x, y, w, h) in SLOTS.items():
+        left, top = round((x - OLD_ORIGIN[0]) / 2) - 6, round((y - OLD_ORIGIN[1]) / 2) - 6
+        box = (left, top, left + w // 2 + 12, top + h // 2 + 12)
+        dx, dy = B.SHIFTS[name]
+        dest = (left + round((dx + 166) / 2), top + round((dy + 160) / 2))
+        result.paste(image.crop(box), dest)
+    # Thirteen by eight unscaled 49px tiles = 1274x784 layout units.
+    tile = image.crop((9, 425, 58, 474))
+    gx, gy = (84 - NEW_ORIGIN[0]) // 2, (549 - NEW_ORIGIN[1]) // 2
+    for row in range(8):
+        for col in range(13):
+            result.paste(tile, (gx + col * 49, gy + row * 49))
+    # Original four-cell potion belt, moved by exactly the controller deltas.
+    result.paste(image.crop((122, 347, 386, 413)), (212, 725))
+    # Compact the gold recess into y=1335..1393, before our Deposit button
+    # at y=1394. The amount/button hit regions remain at y=1340.
+    result.paste(image.crop((159, 626, 351, 687)).resize((192, 29), Image.Resampling.LANCZOS), (10, 726))
+    return result
+
+
+def encode(image, original):
+    """Single-frame BC3 to NVN block-linear, using the existing CPU addresses."""
+    w, h = image.size
+    hdr = bytearray(original[:40])
+    struct.pack_into('<HII', hdr, 6, w - 1, w, h)
+    struct.pack_into('<H', hdr, 20, 1)
+    pitch, rows = (w + 3) // 4 * 16, (h + 3) // 4
+    th = hdr[23]
+    while th and (8 << (th - 1)) >= rows:
+        th -= 1
+    bh = 1 << th
+    size = ((pitch + 63) // 64) * ((rows + 8 * bh - 1) // (8 * bh)) * 512 * bh
+    struct.pack_into('<I', hdr, 32, size)
+    result = bytearray(hdr) + bytearray(size)
+    _, _, addresses = blocks(result)
+    linear = G.bc3(image)
+    for i, address in enumerate(addresses):
+        result[address:address + 16] = linear[i * 16:i * 16 + 16]
+    return bytes(result)
+
+
+def generate(data):
+    if not B.enabled():
+        return data
+    w, h, _ = blocks(data)
+    if (w, h) not in ((512, 700), (507, 700)):
+        raise ValueError('unexpected source inventory background dimensions')
+    if B.mode() == 1:
+        return generate_small(data)
+    return encode(compose(decode(data)), data)
+
+
 def main(romfs, outdir=None):
     if not B.enabled():
         return
@@ -86,6 +159,9 @@ def main(romfs, outdir=None):
         data = romfs_art.read(romfs, B.SPRITE_DIR + name + '.sprite')
         result = generate(data)
         (output / (name + '.sprite')).write_bytes(result)
+        # Explicit inspection output only; build caches contain sprites alone.
+        if outdir:
+            decode(result).save(output / (name + '.png'))
         print('big inventory:', name, len(result))
 
 

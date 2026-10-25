@@ -40,6 +40,7 @@
 // Writes only our own widgets (TouchPouch* / TouchStore); 「自定义」(Custom) page switches gem_pick (auto stow runes and gems + pouch box) and store_btn (Deposit button), on by default; when off the whole block is moved off-screen.
 // Threads: dm_pouch_step on the game main thread (dm_world.c); UI message callback dm_pouch_on_uimsg (diag.c); stow / release / system notices in the server tick dm_pouch_srv_tick (hud_tick in diag.c);
 // persistence in the pre-commit hook pouch_hook on the disk-write thread (start of Commit in hle_fs.c, [2]).
+#include "../ios/tools/big_inventory.h"
 #include "dm_widget.h"
 #include "hle.h"
 #include "dm_i18n.h"
@@ -409,6 +410,12 @@ static void tip_show(uint64_t root, int on) {
     w_text(tb, s); g_tip = 1;
     int32_t *br = (int32_t *)(box + 0x70), w = *(int32_t *)(tb + 0x78), h = *(int32_t *)(tb + 0x7c); if (w <= 0 || h <= 0) { w = 500; h = 300; }
     int x = br[0] + br[2] / 2 - w / 2, y = br[1] - h - 70; if (x < 40) x = 40;
+#if BIG_INV == 2
+    // The pouch now sits at the right edge; keep its popup and border inside
+    // the measured 1408-unit controller inventory panel.
+    if (x + w + 40 > 1408) x = 1408 - w - 40;
+    if (x < 40) x = 40;
+#endif
     w_move(tb, x, y); int32_t *r = (int32_t *)(bg + 0x70); r[2] = w + 80; r[3] = h + 60; w_move(bg, x - 40, y - 30);
 }
 // 交互层（游戏主线程，按下那一刻的命中查询，dm_cursor.c）：清单开着时点哪都先收清单、这一下不做别的（同编年史说明框）；点百宝囊框本身照常（再点一次收起）
@@ -425,8 +432,13 @@ static void ui_pump(void) {
     if (dm_ui_top_chk_on()) { uint64_t old = root ? find_w(root, "TouchPouchBox", 2) : 0; if (old != boxw) { static int k; if (k++ < 20) LOG("【红】百宝囊对拍：TouchPouchBox 新找法 %#llx、旧找法 %#llx", (unsigned long long)boxw, (unsigned long long)old); } }
     if (!boxw) return;
     int gp = dm_custom_get("gem_pick"), sb = dm_custom_get("store_btn");
-    w_move(find_w(boxw, "TouchPouch", 1), gp ? 222 : 99999, 1294); w_move(find_w(boxw, "TouchPouchIcon", 1), gp ? 246 : 99999, 1310); w_move(find_w(boxw, "TouchPouchCount", 1), gp ? 350 : 99999, 1294);
-    w_move(find_w(boxw, "TouchStore", 1), sb ? 916 : 99999, 1323);
+#if BIG_INV == 2
+    const int px = BIG_INV2_POUCH_X, py = BIG_INV2_POUCH_Y, sx = BIG_INV2_STORE_X, sy = BIG_INV2_STORE_Y;
+#else
+    const int px = 222, py = 1294, sx = 916, sy = 1323;
+#endif
+    w_move(find_w(boxw, "TouchPouch", 1), gp ? px : 99999, py); w_move(find_w(boxw, "TouchPouchIcon", 1), gp ? px + 24 : 99999, py + 16);
+    w_move(find_w(boxw, "TouchPouchCount", 1), gp ? px + 128 : 99999, py); w_move(find_w(boxw, "TouchStore", 1), sb ? sx : 99999, sy);
     static int shown = -1; int gen = atomic_load(&g_ugen); if (gen != shown) { char n[16]; snprintf(n, sizeof n, "%d", atomic_load(&g_ucount)); w_text(find_w(boxw, "TouchPouchCount", 1), n); shown = gen; if (g_tip) tip_show(root, 1); }
     if (atomic_exchange(&g_pouch_tap, 0)) tip_show(root, !g_tip);
     if (g_tip) tip_show(root, 1);   // 文字控件量尺寸要晚一两帧（fitToText）：开着时每帧对齐 | Text widgets measure their size a frame or two late (fitToText): align every frame while open
