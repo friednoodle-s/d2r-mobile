@@ -385,6 +385,11 @@ static void lo_notice(const char *key, const char *what) { char msg[200]; snprin
 // 停：背包满时记下阶段，腾出空位再点从这里接着做（生成阶段会把这一件重做，背包里已有的半成品不会自动复用）
 // Stop: on a full inventory remember the phase, so the next tap continues here (the creation phase redoes this piece; leftovers already in the inventory are not reused)
 static void lo_stop(const char *key, const char *what) {
+    // 某一件失败：记红字、跳过这件接着做下一件，一次测试就能看到所有出问题的件（背包满仍是停下等腾空位）
+    // One piece failed: log in red and skip to the next piece, so one test run shows every failing piece (a full inventory still stops and waits for room)
+    if (!strcmp(key, "dmLoFail") && J.st != LO_IDLE && J.st != LO_BACK && J.i < NLO) {
+        lo_notice(key, what); LOG("【红】一键配装：第 %d 件「%s」失败，跳过，接着做第 %d 件", J.i, what ? what : "", J.i + 1);
+        J.i++; J.st = LO_MAKE; J.k = 0; J.nr = 0; J.backtry = 0; return; }
     lo_notice(key, what); J.resume = !strcmp(key, "dmLoNoRoom") && J.st != LO_IDLE && J.st != LO_BACK ? J.st : 0;
     LOG("一键配装：停在第 %d 件「%s」（%s%s）", J.i, what ? what : "", key, J.resume ? "，腾出空位再点接着做" : ""); J.st = J.st == LO_IDLE ? LO_IDLE : LO_BACK;
 }
