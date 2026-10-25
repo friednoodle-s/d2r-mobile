@@ -225,10 +225,10 @@ static int belt_row_block(module_t *m, int x, int y) {
         if (c && nm && !strncmp(nm, "slot_", 5) && *(uint8_t *)(c + 0x50) && (((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)c + 0x48))(c, xy) & 1)) return 0; }
     return ((int (*)(uint64_t, uint64_t))*(uint64_t *)(*(uint64_t *)b + 0x48))(b, xy) & 1;
 }
-// Bag cellSize is overridden locally; other containers retain their original pitch.
+// Only mode 1 shrinks bag cells. Mode 2 and other containers use the original pitch.
 static double ui_cell_pitch(uint64_t widget, int vh) {
     double pitch = 112.5;
-#if BIG_INV
+#if BIG_INV == 1
     const char *name = widget ? (const char *)*(uint64_t *)(widget + 8) : NULL;
     if (name && !strcmp(name, "grid")) {
         for (uint64_t parent = widget, depth = 0; parent && depth < 16; parent = *(uint64_t *)(parent + 0x30), depth++) {
@@ -1259,7 +1259,7 @@ static int g_press_stack;   // 最近一次按下命中的是高级仓库的成�
 static _Atomic int g_vault_drop;   // 最后一次落点查询落在编年史页上时手上那件的 id（否则 0） | id of the held item when the last drop-point query landed on the chronicle page (otherwise 0)
 int dm_ui_vault_drop(void) { return atomic_load(&g_vault_drop); }
 // 视口像素点在物品栏背包格（PlayerInventoryExpansionLayout 的 grid）上：给出它在格里的位置（格为单位 × 100）与格子的列数、行数（编年史拖回背包用）。
-// 边界用格子控件自己的命中函数二分探（同 slot_center），格距随背包构建开关缩小（按 2160 高折算）
+// 边界用格子控件自己的命中函数二分探（同 slot_center），仅 BIG_INV=1 缩小格距（按 2160 高折算）
 // A viewport pixel point on the inventory grid of the inventory panel (the grid of PlayerInventoryExpansionLayout): gives its position within the grid (in cells × 100) and the grid's column and row counts (used for dragging from the chronicle back to the inventory).
 // The bounds use the grid widget's hit-test function; bag pitch follows BIG_INV (scaled for a 2160 height)
 int dm_ui_bag_point(int x, int y, int *fx100, int *fy100, int *cols, int *rows) {
