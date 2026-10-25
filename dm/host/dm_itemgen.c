@@ -237,7 +237,12 @@ static void resend(uint64_t G, uint64_t player, uint64_t it) {
 }
 static uint64_t make_ready2(uint64_t G, uint64_t player, const char *code4, int q, int row, int ilvl, int sockets, int eth, int *in_bag) {
     uint64_t it = make(G, player, code4, q, row, ilvl, eth); if (!it) return 0;
-    if (sockets > 0) { ((void (*)(uint64_t, int))(B + 0x5754a0))(it, sockets); LOG("刷装备：%.4s 设 %d 孔 → 读回 %d", code4, sockets, gs(it, 194)); }
+    if (sockets > 0) { ((void (*)(uint64_t, int))(B + 0x5754a0))(it, sockets);
+        // 暗金自带随机孔数（岁月之冠 1–2）时 0x5754a0 不再加孔（云端测试 9.1：设 2 读回 1）：孔数在它自己的词缀表里，直接把那一条改成要的数
+        // A unique that rolls its own socket count (Crown of Ages 1-2) gets no more from 0x5754a0 (cloud test 9.1: set 2, read back 1): the count lives in its own affix list, so set that entry to the wanted value
+        if (gs(it, 194) < sockets && q != 2) { uint64_t M = affix_list(it, 0); uint8_t v = *(uint8_t *)(uintptr_t)(it + 0x1bd); int have = gs(it, 194);
+            if (M) { int cur = ((int (*)(uint8_t, uint64_t, int, int))(B + 0x5bc690))(v, M, 194, 0); ((int (*)(uint8_t, uint64_t, int, int, int))(B + 0x5bbe20))(v, M, 194, cur + sockets - have, 0); } }
+        LOG("刷装备：%.4s 设 %d 孔 → 读回 %d", code4, sockets, gs(it, 194)); }
     ((int (*)(uint64_t, uint64_t, uint64_t))(B + 0x78acf0))(G, player, it);
     // 符文之语底材（普通品质、带孔）镶嵌前不写词缀、不去需求：普通底材本来没有物品词缀表，提前写会新建一张，真机上镶到成词的最后一颗时被原版退回光标
     // （build 14.1 日志：正义之手前 3 颗镶进、第 4 颗留在光标）。成词以后再写（lo_sock 末尾 / rw_post），并重发整件
@@ -482,6 +487,7 @@ static int lo_equip(uint64_t G, uint64_t pl, const lo_piece_t *pc) {
     else { uint8_t p[13] = { 0x1d }; w32(p + 1, J.base); w32(p + 5, oid); w32(p + 9, (uint32_t)slot); dispatch(G, pl, p, 13); if (mode_of(old) == 4) drop_cursor(G, pl, old); }   // 换下的旧件丢到脚下（用户的做法：穿上新的、丢掉旧的） | the replaced piece is dropped (the user's approach: wear the new one, drop the old)
     uint64_t d = rd(it + 0x10); int ok = mode_of(it) == 1 && d && *(uint8_t *)(uintptr_t)(d + 0x54) == slot;
     LOG("一键配装：「%s」穿到装备位 %d %s；换下 id %u → %s", pc->what, slot, ok ? "成" : "【红】败", oid, !old ? "（原来空着）" : mode_of(old) == 3 ? "丢在脚下" : mode_of(old) == 0 ? "进背包" : "【红】没放好");
+    if (!ok) LOG("一键配装：「%s」穿不上：模式 %d，装备位读回 %d，需求等级 %d，属性 91 有效值 %d，武器组 %d", pc->what, mode_of(it), d ? *(uint8_t *)(uintptr_t)(d + 0x54) : -1, ((int (*)(uint64_t, uint64_t))(B + 0x571580))(it, pl), gs(it, 91), cur_set(pl));
     if (!ok && mode_of(it) == 4) pk_grid(G, pl, 0x18, J.base, nx, ny, 0);
     if (old && mode_of(old) == 4) { lo_stop("dmLoNoRoom", pc->what); return 0; }   // 旧件还在光标上：由 lo_tick 等有空位再放 | the old piece is still on the cursor: lo_tick puts it away once there is room
     if (!ok) { lo_stop("dmLoFail", pc->what); return 0; }
