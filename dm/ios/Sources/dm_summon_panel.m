@@ -70,7 +70,8 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
 
     _pageCheat = [UIScrollView new]; _pageCheat.hidden = YES; _pageCheat.indicatorStyle = UIScrollViewIndicatorStyleWhite; [_panel addSubview:_pageCheat];
     NSArray *cheats = @[@[@"dmCheatLv1", @(DM_CHEAT_LEVEL_UP), @0], @[@"dmCheatLv99", @(DM_CHEAT_LEVEL_99), @0], @[@"dmCheatGold", @(DM_CHEAT_GOLD_MAX), @0],
-                        @[@"dmCheatStat", @(DM_CHEAT_STATPTS), @10], @[@"dmCheatSkill", @(DM_CHEAT_SKILLPTS), @5], @[@"dmCheatRefill", @(DM_CHEAT_REFILL), @0]];
+                        @[@"dmCheatStat", @(DM_CHEAT_STATPTS), @10], @[@"dmCheatSkill", @(DM_CHEAT_SKILLPTS), @5], @[@"dmCheatRefill", @(DM_CHEAT_REFILL), @0],
+                        @[@"dmCheatWp", @(DM_CHEAT_WAYPOINTS), @0], @[@"dmCheatDiff", @(DM_CHEAT_DIFFICULTY), @0]];
     for (NSArray *c in cheats) { UIButton *b = mk_button(@(dm_ui([c[0] UTF8String])), self, @selector(cheat:)); b.tag = [c[1] intValue] * 1000 + [c[2] intValue]; [_pageCheat addSubview:b]; }
     for (int i = 0; i < 2 + DM_NBUFF; i++) {   // 0 无敌、1 无限法力、其后是属性开关（dm_summon.h DM_BUFF_*） | 0 god mode, 1 infinite mana, then the stat toggles (dm_summon.h DM_BUFF_*)
         UILabel *l = mk_label(@(dm_ui(i == 0 ? "dmCheatGod" : i == 1 ? "dmCheatInfMana" : dm_cheat_buff_key(i - 2))), 15); l.tag = 950 + i; [_pageCheat addSubview:l];
@@ -93,8 +94,9 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     y += 44;
     [_pageSummon viewWithTag:901].frame = CGRectMake(0, y, (pw - 8) / 2, bh); [_pageSummon viewWithTag:902].frame = CGRectMake((pw + 8) / 2, y, (pw - 8) / 2, bh);
     int k = 0; for (UIView *v in _pageCheat.subviews) if ([v isKindOfClass:UIButton.class]) { v.frame = CGRectMake((k % 3) * (bw + 8), (k / 3) * (bh + 8), bw, bh); k++; }
-    for (int i = 0; i < 2 + DM_NBUFF; i++) { CGFloat yy = 2 * (bh + 8) + 6 + i * 42; [_pageCheat viewWithTag:950 + i].frame = CGRectMake(0, yy, pw - 70, 36); [_pageCheat viewWithTag:960 + i].frame = CGRectMake(pw - 56, yy + 2, 51, 31); }
-    _pageCheat.contentSize = CGSizeMake(pw, 2 * (bh + 8) + 6 + (2 + DM_NBUFF) * 42);
+    CGFloat top = ((k + 2) / 3) * (bh + 8) + 6;   // 按钮占的行数（每行 3 个） | rows taken by the buttons (3 per row)
+    for (int i = 0; i < 2 + DM_NBUFF; i++) { CGFloat yy = top + i * 42; [_pageCheat viewWithTag:950 + i].frame = CGRectMake(0, yy, pw - 70, 36); [_pageCheat viewWithTag:960 + i].frame = CGRectMake(pw - 56, yy + 2, 51, 31); }
+    _pageCheat.contentSize = CGSizeMake(pw, top + (2 + DM_NBUFF) * 42);
     CGRect f = _fab.frame; f.origin.x = MAX(0, MIN(f.origin.x, b.size.width - f.size.width)); f.origin.y = MAX(0, MIN(f.origin.y, b.size.height - f.size.height)); _fab.frame = f;
 }
 - (void)toggle {

@@ -190,6 +190,33 @@ static void clear_all(uint64_t G, uint64_t player) {
     g_nids = 0; LOG("召唤：一键清除 %d 只", n); dm_game_notice(B, dm_str(B, n ? "dmSumCleared" : "dmSumNone"));
 }
 
+// 开全部小站：玩家数据块 P = [玩家+0x10]，三个难度的小站位图在 [P+0x58 + 8 × 难度]（16 字节：第 0 个 16 位字是版本头 0x102，其后小站 k 在字 1 + k / 16 的 1 << (k % 16)；0x6af190 激活小站就这么置位）。
+// 有效小站编号 0–38（原版 levels.txt 的 Waypoint 列，共 39 个）。头不是 0x102 的不碰。改完把当前难度那份整份发给客户端 0x63e5c0([P+0xf0], 位图)（原版激活后同样调），再请一次原版存盘
+// Unlock all waypoints: player data block P = [player+0x10]; the waypoint bitmaps of the three difficulties are at [P+0x58 + 8 × difficulty] (16 bytes: 16-bit word 0 is the version header 0x102, then waypoint k is bit 1 << (k % 16) of word 1 + k / 16; this is how 0x6af190 sets it when a waypoint is activated).
+// Valid waypoint indices are 0–38 (the Waypoint column of the original levels.txt, 39 in all). Bitmaps whose header is not 0x102 are left alone. Afterwards the current difficulty's bitmap is sent whole to the client 0x63e5c0([P+0xf0], bitmap) (the original calls it after activation too), and one original save is requested
+int dm_request_save(void);
+static void unlock_waypoints(uint64_t player) {
+    uint64_t P = rd(player + 0x10); if (!P) return; int n = 0;
+    for (int d = 0; d < 3; d++) { uint16_t *wp = (uint16_t *)(uintptr_t)rd(P + 0x58 + 8 * d);
+        if (!wp || wp[0] != 0x102) { LOG("通用修改：难度 %d 的小站位图%s，不改", d, wp ? "头不是 0x102" : "没有"); continue; }
+        for (int k = 0; k < 39; k++) wp[1 + k / 16] |= (uint16_t)(1u << (k % 16)); n++; }
+    uint8_t cur = *(uint8_t *)(uintptr_t)(g_G + 0x104); uint64_t client = rd(P + 0xf0), wpc = cur < 3 ? rd(P + 0x58 + 8 * cur) : 0;
+    if (client && wpc) ((void (*)(uint64_t, uint64_t))(B + 0x63e5c0))(client, wpc);
+    dm_request_save(); LOG("通用修改：开全部小站，%d 个难度", n); dm_game_notice(B, dm_str(B, "dmCheatWpDone"));
+}
+// 解锁全部难度：最高可进难度记在 [P+0xf0] +0x0e 这个 16 位字的第 8–12 位（progress）；原版打完巴尔 0x758330 把它抬到 max(旧值, 5 × 难度 + 5)，
+// 资料片角色 > 4 可进噩梦、> 9 可进地狱（经典角色阈值 > 3 / > 7）。抬到 10，别的位不动；不改 G+0x104（那是本局的难度规则），也不碰任务位。
+// 要等原版存盘、退回选角界面才看得到（当前这一局不变）
+// Unlock all difficulties: the highest enterable difficulty is bits 8–12 (progress) of the 16-bit word at [P+0xf0] +0x0e; on killing Baal the original 0x758330 raises it to max(old, 5 × difficulty + 5);
+// expansion characters can enter Nightmare at > 4 and Hell at > 9 (classic thresholds > 3 / > 7). It is raised to 10, other bits untouched; G+0x104 (this run's difficulty rule) and the quest bits are not touched.
+// It only shows after the original saves and the player returns to character select (the current run does not change)
+static void unlock_difficulty(uint64_t player) {
+    uint64_t P = rd(player + 0x10), client = P ? rd(P + 0xf0) : 0; if (!client) return;
+    uint16_t *fl = (uint16_t *)(uintptr_t)(client + 0x0e); unsigned old = (*fl >> 8) & 31u;
+    if (old < 10) *fl = (uint16_t)((*fl & ~0x1f00u) | (10u << 8));
+    dm_request_save(); LOG("通用修改：难度进度 %u → %u", old, (*fl >> 8) & 31u); dm_game_notice(B, dm_str(B, "dmCheatDiffDone"));
+}
+
 static void cheat(uint64_t player, int op, int arg) {
     int lv = gs(player, 12), to = lv;
     switch (op) {
@@ -199,6 +226,8 @@ static void cheat(uint64_t player, int op, int arg) {
     case DM_CHEAT_STATPTS: ss(player, 4, gs(player, 4) + arg); dm_game_notice(B, dm_str(B, "dmCheatStatDone")); return;
     case DM_CHEAT_SKILLPTS: ss(player, 5, gs(player, 5) + arg); dm_game_notice(B, dm_str(B, "dmCheatSkillDone")); return;
     case DM_CHEAT_REFILL: ss(player, 6, gs(player, 7)); ss(player, 8, gs(player, 9)); ss(player, 10, gs(player, 11)); return;
+    case DM_CHEAT_WAYPOINTS: unlock_waypoints(player); return;
+    case DM_CHEAT_DIFFICULTY: unlock_difficulty(player); return;
     default: return; }
     // 升级走原版加经验 0x7dd9e0(游戏, 玩家, 原等级, 经验增量)：杀怪分经验最终调的就是它，按经验表连升多级并一次结算每级成长（属性点 / 技能点 / 生命法力耐力）与升级特效。
     // 门槛与等级上限都读运行时经验表 [数据表 + 0x1500]：+4 × 职业 = 该职业等级上限，+0x24 × 等级 + 4 × 职业 = 到该级的累计经验；基础等级 / 经验用 0x5b9110 读（同原版累加器）。

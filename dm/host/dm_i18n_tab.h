@@ -489,4 +489,8 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmBuffDamage", "超高伤害（压碎、致命）", "Huge Damage (crushing, deadly)", "Daño enorme (aplastante, mortal)", "Daño enorme (aplastante, mortal)", "Огромный урон (сокруш., смерт.)", "막대한 피해 (강타, 치명타)" },
     { "dmBuffResist", "全抗性 +100", "All Resistances +100", "Todas las resistencias +100", "Todas las resistencias +100", "Все сопротивления +100", "모든 저항 +100" },
     { "dmBuffSkills", "全技能 +5", "All Skills +5", "Todas las habilidades +5", "Todas las habilidades +5", "Все умения +5", "모든 기술 +5" },
+    { "dmCheatWp", "开全部小站", "All Waypoints", "Todos los portales", "Todos los portales", "Все путевые точки", "모든 웨이포인트" },
+    { "dmCheatDiff", "解锁全部难度", "Unlock Difficulties", "Desbloquear dificultades", "Desbloquear dificultades", "Открыть сложности", "모든 난이도 해제" },
+    { "dmCheatWpDone", "已开启全部小站", "All waypoints unlocked", "Todos los portales desbloqueados", "Todos los portales desbloqueados", "Все путевые точки открыты", "모든 웨이포인트를 열었습니다" },
+    { "dmCheatDiffDone", "已解锁噩梦和地狱：存档后回到选角界面生效", "Nightmare and Hell unlocked: takes effect after saving and returning to character select", "Pesadilla e Infierno desbloqueados: se aplica tras guardar y volver a la selección de personaje", "Pesadilla e Infierno desbloqueados: se aplica tras guardar y volver a la selección de personaje", "Кошмар и Ад открыты: вступит в силу после сохранения и выхода к выбору героя", "악몽과 지옥 해제: 저장 후 캐릭터 선택 화면으로 돌아가면 적용됩니다" },
 };

@@ -4,7 +4,7 @@
 #include <stdint.h>
 
 enum { DM_SUM_ANDARIEL, DM_SUM_DURIEL, DM_SUM_MEPHISTO, DM_SUM_DIABLO, DM_SUM_BAAL, DM_SUM_NBOSS };
-enum { DM_CHEAT_LEVEL_UP = 1, DM_CHEAT_LEVEL_99, DM_CHEAT_GOLD_MAX, DM_CHEAT_STATPTS, DM_CHEAT_SKILLPTS, DM_CHEAT_REFILL };
+enum { DM_CHEAT_LEVEL_UP = 1, DM_CHEAT_LEVEL_99, DM_CHEAT_GOLD_MAX, DM_CHEAT_STATPTS, DM_CHEAT_SKILLPTS, DM_CHEAT_REFILL, DM_CHEAT_WAYPOINTS, DM_CHEAT_DIFFICULTY };
 
 // 界面线程调：只投请求，服务端下一拍执行 | called from the UI thread: only posts a request, executed on the next server tick
 void dm_summon_request(int boss, int count);   // boss = DM_SUM_*，count 1–10
