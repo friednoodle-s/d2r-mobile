@@ -119,10 +119,18 @@ static int rt_row(uint64_t G, int kind, int i) {
     LOG("【红】刷装备：运行时%s表里找不到 %.4s（清单行 %d，表 %llu 行）", u ? "暗金" : "套装", code, r, (unsigned long long)n); return -1;
 }
 
-// 装备免等级需求（见文件头）：按当前游戏版本那张表，第一次开时存原值再清零，关时写回；表指针变了（重新载表）就当新表 | no level requirement (see the file header)
+// 装备免等级需求（见文件头）：三个版本的表（[main+0x2d64a18 + 版本×16]，版本 1–3）都改，第一次开时存原值再清零，关时写回；表指针变了（重新载表）就当新表。
+// 不只改游戏版本 G+0x106 那张：等级函数 0x571580 按物品自己的版本 +0x1bd 取表（0x5717e8–0x571800）。build 12.1 真机只改了前者，开关开着拉扎鲁斯的螺旋杖仍要 18 级；
+// 两个版本不一致是推断，没有日志证实，所以生成后把物品版本、游戏版本和 0x571580 读回的需求等级记进日志
+// No level requirement (see the file header): the tables of all three versions ([main+0x2d64a18 + version×16], versions 1-3) are changed; originals are kept on the first enable, then zeroed, and written back on disable; a changed table pointer (reloaded tables) counts as a new table.
+// Not only the game version's table at G+0x106: the level function 0x571580 picks the table by the item's own version +0x1bd (0x5717e8-0x571800). Build 12.1 changed only the former, and on the device Lazarus Spire still required level 18 with the switch on;
+// a mismatch of the two versions is an inference not confirmed by a log, so after creation the item version, game version and the level read back from 0x571580 are logged
 static struct { uint64_t T; int on; uint32_t nu, ns, ni; int16_t *u, *s; uint8_t *it; } g_lv[4];
-static void lv_apply(uint64_t G) {
-    uint8_t v = *(uint8_t *)(uintptr_t)(G + 0x106); uint64_t T = tables(G); if (!T) return;
+static void lv_apply1(int v);
+static void lv_apply(void) { for (int v = 1; v <= 3; v++) lv_apply1(v); }
+static void lv_apply1(int v) {
+    uint64_t T = rd((uint64_t)(uintptr_t)(B + 0x2d64a18 + v * 16)); if (!T) return;
+    for (int w = 1; w < v; w++) if (g_lv[w].T == T) return;   // 两个版本共用一张表：只改一次 | two versions sharing one table: change it once
     int on = atomic_load(&g_nolv); __typeof__(&g_lv[0]) L = &g_lv[v];
     if (L->T != T) { free(L->u); free(L->s); free(L->it); memset(L, 0, sizeof *L); L->T = T; }
     if (on == L->on) return;
@@ -139,7 +147,7 @@ static void lv_apply(uint64_t G) {
     for (uint32_t k = 0; k < L->nu; k++) *(int16_t *)(uintptr_t)(ur + k * 0x15c + 0x3a) = on ? 0 : L->u[k];
     for (uint32_t k = 0; k < L->ns; k++) *(int16_t *)(uintptr_t)(sr + k * 0x1cc + 0x36) = on ? 0 : L->s[k];
     for (uint32_t k = 0; k < L->ni; k++) *(uint8_t *)(uintptr_t)(ir + k * 0x1c0 + 0x14f) = on ? 0 : L->it[k];
-    L->on = on; LOG("刷装备：装备免等级需求 %s（版本 %u：暗金 %u、套装 %u、物品 %u 行）", on ? "开" : "关，原值写回", v, L->nu, L->ns, L->ni);
+    L->on = on; LOG("刷装备：装备免等级需求 %s（版本 %d：暗金 %u、套装 %u、物品 %u 行）", on ? "开" : "关，原值写回", v, L->nu, L->ns, L->ni);
 }
 
 static int gs(uint64_t u, int st) { return ((int (*)(uint64_t, int, int))(B + 0x5b9290))(u, st, 0); }
@@ -182,6 +190,8 @@ static uint64_t make_ready(uint64_t G, uint64_t player, const char *code4, int q
     if (sockets > 0) { ((void (*)(uint64_t, int))(B + 0x5754a0))(it, sockets); LOG("刷装备：%.4s 设 %d 孔 → 读回 %d", code4, sockets, gs(it, 194)); }
     ((int (*)(uint64_t, uint64_t, uint64_t))(B + 0x78acf0))(G, player, it);
     if (q != 2 || sockets > 0) no_req(it);   // 符文本身没有力量 / 敏捷需求，不写 | runes have no strength / dexterity requirement, left alone
+    LOG("刷装备：%.4s 物品版本 %u（游戏 %u），需求等级 %d，属性 91 有效值 %d", code4, *(uint8_t *)(uintptr_t)(it + 0x1bd), *(uint8_t *)(uintptr_t)(G + 0x106),
+        ((int (*)(uint64_t, uint64_t))(B + 0x571580))(it, player), gs(it, 91));
     *in_bag = pick_up(G, player, it);
     return it;
 }
@@ -208,7 +218,7 @@ static void spawn(uint64_t G, uint64_t player, int kind, int i) {
 
 void dm_itemgen_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
     B = main_base; if (!G || !player) return;
-    lv_apply(G);
+    lv_apply();
     int r = atomic_exchange(&g_req, -1); if (r < 0) return;
     int kind = r >> 16, i = r & 0xffff; LOG("刷装备：请求 种类 %d 第 %d 条「%s」", kind, i, dm_itemgen_name(kind, i));
     spawn(G, player, kind, i);
