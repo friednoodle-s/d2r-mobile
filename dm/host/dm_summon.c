@@ -72,7 +72,7 @@ static _Atomic int g_req_boss = -1, g_req_n, g_req_clear, g_req_op, g_req_arg, g
 static uint8_t *B;
 // 名单与逐拍快照：查「随从满血突然死」用。每拍对比 模式 / 是否在宠物表 / +0x124 / 主人 id，有变化就记一行；死前最后一次变化就是线索
 // List and per-tick snapshot, for chasing "the minion suddenly dies at full life": every tick compare mode / on the pet table / +0x124 / owner id and log a line on any change; the last change before death is the clue
-static uint32_t g_flag[MAX_KEEP], g_mode[MAX_KEEP], g_own[MAX_KEEP]; static int g_inpet[MAX_KEEP], g_sk[MAX_KEEP];
+static uint32_t g_snflag[MAX_KEEP], g_snmode[MAX_KEEP], g_snown[MAX_KEEP]; static int g_sninpet[MAX_KEEP], g_sk[MAX_KEEP];
 static _Atomic int g_bindmode;   // 面板「绑定类型」：0 骷髅复生（70）、1 束缚恶魔（382）、2 女武神（32）、3 不转化 | panel "bind type": 0 Raise Skeleton (70), 1 Bind Demon (382), 2 Valkyrie (32), 3 do not bind
 static uint32_t g_ids[MAX_KEEP]; static int g_hp[MAX_KEEP], g_nids;   // 我们刷出来的单位 id 与上一拍的生命（×256；服务端线程独占） | unit ids we spawned and their life on the previous tick (×256; owned by the server thread)
 static uint64_t g_G;                                  // 换局（游戏对象变了）就清名单 | a new run (the game object changed) clears the list
@@ -187,7 +187,7 @@ static void summon(uint64_t G, uint64_t player, int boss, int n) {
         if (!u) continue; ok++;
         *(uint32_t *)(uintptr_t)(u + 0x124) |= 0x20000;   // 不掉落：死了不出宝，也防清除时爆一地 | no drop: nothing on death, and no loot shower when cleared
         int c = C.bind ? to_minion(G, player, u, atomic_load(&g_alive) + conv) : 0; conv += c || !C.bind;
-        g_hp[g_nids] = gs(u, 6); g_sk[g_nids] = C.bind ? C.skill : -1; g_flag[g_nids] = g_mode[g_nids] = g_own[g_nids] = 0xffffffffu; g_inpet[g_nids] = -1; g_ids[g_nids++] = *(uint32_t *)(uintptr_t)(u + 8);
+        g_hp[g_nids] = gs(u, 6); g_sk[g_nids] = C.bind ? C.skill : -1; g_snflag[g_nids] = g_snmode[g_nids] = g_snown[g_nids] = 0xffffffffu; g_sninpet[g_nids] = -1; g_ids[g_nids++] = *(uint32_t *)(uintptr_t)(u + 8);
         LOG("召唤：%s（类号 %d）id %u 在 %d,%d（玩家 %d,%d）→ 转随从%s", k_boss[boss].key, k_boss[boss].cls, *(uint32_t *)(uintptr_t)(u + 8), pos[0], pos[1], px, py, c ? "成" : "败");
     }
     char msg[160]; snprintf(msg, sizeof msg, dm_str(B, "dmSumDone"), dm_str(B, k_boss[boss].key), ok); dm_game_notice(B, ok ? msg : dm_str(B, "dmSumNoRoom"));
@@ -293,13 +293,13 @@ void dm_summon_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
     for (int i = 0; i < g_nids; i++) { uint32_t id = g_ids[i]; uint64_t u = find_unit(G, id);
         if (u) { uint64_t md = rd(u + 0x10), ai = md ? rd(md + 0x38) : 0, slot = g_sk[i] >= 0 ? pet_slot(G, player, g_sk[i]) : 0;
             uint32_t fl = *(uint32_t *)(uintptr_t)(u + 0x124), mo = *(uint32_t *)(uintptr_t)(u + 0xc), ow = ai ? *(uint32_t *)(uintptr_t)(ai + 0x68) : 0; int ip = slot ? is_pet(slot, id) : -1;
-            if (fl != g_flag[i] || mo != g_mode[i] || ow != g_own[i] || ip != g_inpet[i])
-                LOG("召唤：id %u 拍 %u 模式 %u→%u 宠物表 %d→%d +0x124 %#x→%#x 主人 %u→%u 生命 %d/%d（上一拍 %d）", id, t, g_mode[i], mo, g_inpet[i], ip, g_flag[i], fl, g_own[i], ow, gs(u, 6) >> 8, gs(u, 7) >> 8, g_hp[i] >> 8);
-            g_flag[i] = fl; g_mode[i] = mo; g_own[i] = ow; g_inpet[i] = ip; }
+            if (fl != g_snflag[i] || mo != g_snmode[i] || ow != g_snown[i] || ip != g_sninpet[i])
+                LOG("召唤：id %u 拍 %u 模式 %u→%u 宠物表 %d→%d +0x124 %#x→%#x 主人 %u→%u 生命 %d/%d（上一拍 %d）", id, t, g_snmode[i], mo, g_sninpet[i], ip, g_snflag[i], fl, g_snown[i], ow, gs(u, 6) >> 8, gs(u, 7) >> 8, g_hp[i] >> 8);
+            g_snflag[i] = fl; g_snmode[i] = mo; g_snown[i] = ow; g_sninpet[i] = ip; }
         if (!u) { LOG("召唤：id %u 不在单位表了（卸载或被回收），上一拍生命 %d", id, g_hp[i] >> 8); continue; }
         if (!alive(u)) { LOG("召唤：id %u 死了：上一拍生命 %d、上限 %d、等级 %d、模式 %u、+0x124 %#x", id, g_hp[i] >> 8, gs(u, 7) >> 8, gs(u, 12), *(uint32_t *)(uintptr_t)(u + 0xc), *(uint32_t *)(uintptr_t)(u + 0x124)); continue; }
         int hp = gs(u, 6); if (t % 50 == 0 && lo < (int)sizeof line - 60) lo += snprintf(line + lo, sizeof line - lo, " [id %u hp %d/%d lv %d]", id, hp >> 8, gs(u, 7) >> 8, gs(u, 12));
-        g_hp[w] = hp; g_sk[w] = g_sk[i]; g_flag[w] = g_flag[i]; g_mode[w] = g_mode[i]; g_own[w] = g_own[i]; g_inpet[w] = g_inpet[i]; g_ids[w++] = id; n++; }
+        g_hp[w] = hp; g_sk[w] = g_sk[i]; g_snflag[w] = g_snflag[i]; g_snmode[w] = g_snmode[i]; g_snown[w] = g_snown[i]; g_sninpet[w] = g_sninpet[i]; g_ids[w++] = id; n++; }
     if (lo) LOG("召唤：在场%s", line);
     g_nids = w; atomic_store(&g_alive, n);
 }
