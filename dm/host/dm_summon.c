@@ -141,6 +141,26 @@ static uint64_t pet_slot(uint64_t G, uint64_t player, int skill) {
     uint64_t pd = rd(player + 0x10), lst = pd ? rd(pd + 0x98) : 0, arr = lst ? rd(lst) : 0; return arr ? arr + (uint64_t)ty * 0x20 : 0;
 }
 static int is_pet(uint64_t slot, uint32_t id) { int k = 0; for (uint64_t nd = rd(slot); nd && k < 256; nd = rd(nd + 0x18), k++) if (*(uint32_t *)(uintptr_t)(nd + 4) == id) return 1; return 0; }
+// 随从上限的根：原版在玩家状态变化时（喝药、碰神龛…，真机日志）按玩家技能链重算各宠物类型上限（0x6c0840 起：遍历 [玩家+0x100] 的技能节点，
+// 节点 +0 技能表行、+0x38 基础等级、+0x44 = -1 时再加装备加成；技能行 +0x114 有算式、+0x112 宠物类型 ≥ 1 才算，上限 = max(1, 算式(等级))，0x6c0ab0 写进宠物槽），
+// 没有对应技能的类型上限为 0，0x6c39e0 随即把多出来的随从注销（宠物表 1→0、同拍死亡）。所以绑定前在服务端玩家的技能链上挂好这个技能
+// （原版不扣技能点的加技能 main+0x7bf010，同免费回城 dm_freetp.c；只挂服务端玩家：界面读客户端那份，技能表里看不见，非本职技能也不进存档），
+// 等级给到算式能装下 want 只（骷髅复生「(lvl < 4) ? lvl : (2 + lvl / 3)」）。玩家自己学过的同一技能（节点不是我们挂的、等级 > 0）不动它的等级
+// The root of the minion cap: when the player's state changes (drinking a potion, touching a shrine..., device log) the original recomputes each pet type's cap from the player's skill chain (from 0x6c0840: walk the skill nodes of [player+0x100],
+// node +0 skill table row, +0x38 base level, plus the equipment bonus when +0x44 = -1; only skill rows with a formula at +0x114 and pet type +0x112 ≥ 1 count, cap = max(1, formula(level)), written into the pet slot by 0x6c0ab0);
+// a type without a matching skill gets cap 0, and 0x6c39e0 then unregisters the surplus minions (pet table 1→0, death on the same tick). So before binding, this skill is put on the server player's skill chain
+// (the original's add-skill that spends no skill point, main+0x7bf010, same as free town portal in dm_freetp.c; server player only: the UI reads the client copy, so it does not show in the skill list, and a non-class skill is not saved),
+// at a level whose formula holds want minions (Raise Skeleton "(lvl < 4) ? lvl : (2 + lvl / 3)"). If the player learned the same skill themselves (a node we did not add, level > 0), its level is left alone
+static void ensure_cap_skill(uint64_t player, int skill, int want) {
+    static uint64_t mine_pl, mine_node;
+    uint64_t sl = rd(player + 0x100), node = 0;
+    for (uint64_t n = sl ? rd(sl) : 0, k = 0; n && k < 512 && !node; n = rd(n + 8), k++) { uint64_t rec = rd(n); if (rec && *(int16_t *)(uintptr_t)rec == skill) node = n; }
+    if (!node) { node = ((uint64_t (*)(uint64_t, int))(B + 0x7bf010))(player, skill); mine_pl = player; mine_node = node; LOG("召唤：服务端玩家技能链挂上技能 %d → %s", skill, node ? "成" : "【红】失败"); }
+    if (!node) return;
+    int32_t *lv = (int32_t *)(uintptr_t)(node + 0x38); int need = want < 4 ? want : 3 * (want - 2);
+    if (!(player == mine_pl && node == mine_node) && *lv > 0) { LOG("召唤：玩家自己有技能 %d（等级 %d），不改等级", skill, *lv); return; }
+    if (*lv < need) { LOG("召唤：技能 %d 等级 %d → %d（装下 %d 只）", skill, *lv, need, want); *lv = need; }
+}
 static int to_minion(uint64_t G, uint64_t player, uint64_t u, int present) {   // present：这只之前已在场的我们的随从数 | present: how many of our minions were already present before this one
     int32_t *seq = (int32_t *)(uintptr_t)(G + 0x16c); int link = *seq == 0x7fffffff ? 1 : *seq + 1; *seq = link;
     uint32_t id = *(uint32_t *)(uintptr_t)(u + 8); int lv0 = gs(u, 12), mx0 = gsb(u, 7), full0 = gs(u, 7);
@@ -148,6 +168,7 @@ static int to_minion(uint64_t G, uint64_t player, uint64_t u, int present) {   /
     // 所以这一次调用前把它临时换成骷髅复生（70）的算式「(lvl < 4) ? lvl : (2 + lvl / 3)」，技能等级给到够装下已在场的数目 + 1，调完立刻换回（真术士自己的束缚照旧一只）
     // Count: Bind Demon's petmax is the constant 1 (skills.txt line 384), so binding a second one makes the original trim the first (0x6c39e0 → 0x6c0c30). The cap is computed at bind time from the formula at skill record +0x114,
     // so for this one call it is temporarily swapped for Raise Skeleton's (70) formula "(lvl < 4) ? lvl : (2 + lvl / 3)", with a skill level high enough to hold those already present + 1, and swapped back right after (a real Warlock's own bind stays at one)
+    ensure_cap_skill(player, C.skill, present + 1);
     uint64_t rec = skill_rec(G, C.skill, NULL), rsk = skill_rec(G, 70, NULL); int lvl = C.level, keep = 0;
     if (C.multi && rec && rsk) { int want = present + 1; int need = want < 4 ? want : 3 * (want - 2); if (need > lvl) lvl = need;
         keep = *(int32_t *)(uintptr_t)(rec + 0x114); *(int32_t *)(uintptr_t)(rec + 0x114) = *(int32_t *)(uintptr_t)(rsk + 0x114); }
