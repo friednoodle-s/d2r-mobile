@@ -358,9 +358,15 @@ static int find_free(uint64_t pl, uint64_t it, uint32_t *x, uint32_t *y) {
     return ((int (*)(uint64_t, uint64_t, int, uint32_t *, uint32_t *, uint8_t))(B + 0x55f620))(rd(pl + 0x90), it, grid, x, y, 0) & 1;
 }
 // 光标上有东西就放进背包空格：返回 1 = 光标已空 | put whatever is on the cursor into a free inventory cell: 1 = cursor empty
+// 光标上的东西丢到脚下：0x17 {物品 id}（客户端没有物品面板时自己丢东西用的就是它，见 dm_runeword.c item_panel_open）| drop the cursor item at the player's feet: 0x17 {item id}
+static int drop_cursor(uint64_t G, uint64_t pl, uint64_t it) {
+    uint32_t id = *(uint32_t *)(uintptr_t)(it + 8); uint8_t p[5] = { 0x17 }; w32(p + 1, id); dispatch(G, pl, p, 5);
+    int ok = !cursor_item(pl); LOG("一键配装：光标上的 id %u 丢到脚下 %s", id, ok ? "成" : "【红】败"); return ok;
+}
 static int clear_cursor(uint64_t G, uint64_t pl) {
-    uint64_t it = cursor_item(pl); uint32_t x, y; if (!it) return 1;
+    uint64_t it = cursor_item(pl); uint32_t x = 0, y = 0; if (!it) return 1;
     if (find_free(pl, it, &x, &y)) pk_grid(G, pl, 0x18, *(uint32_t *)(uintptr_t)(it + 8), (int)x, (int)y, 0);
+    else return drop_cursor(G, pl, it);   // 背包放不下（多半是换下来的旧装备）：丢到脚下，不卡住配装 | no room in the bag (usually a replaced piece): drop it, do not stall the loadout
     if (!cursor_item(pl)) { LOG("一键配装：光标上的 id %u 放回背包 %u,%u", *(uint32_t *)(uintptr_t)(it + 8), x, y); return 1; }
     return 0;
 }
@@ -448,12 +454,12 @@ static int lo_equip(uint64_t G, uint64_t pl, const lo_piece_t *pc) {
     int slot = pc->slot; uint64_t old = equipped(pl, slot); uint32_t ox = 0, oy = 0;
     pk_grid(G, pl, 0x19, J.base, nx, ny, 0);
     if (mode_of(it) != 4) { LOG("一键配装：「%s」拿不起来（模式 %d）", pc->what, mode_of(it)); lo_stop("dmLoFail", pc->what); return 0; }
-    if (old && !find_free(pl, old, &ox, &oy)) { pk_grid(G, pl, 0x18, J.base, nx, ny, 0); lo_stop("dmLoNoRoom", pc->what); return 0; }
+    (void)ox; (void)oy;   // 换下的旧件不要求背包有空位：丢到脚下 | a replaced piece needs no bag space: it is dropped
     uint32_t oid = old ? *(uint32_t *)(uintptr_t)(old + 8) : 0;
     if (!old) { uint8_t p[9] = { 0x1a }; w32(p + 1, J.base); w32(p + 5, (uint32_t)slot); dispatch(G, pl, p, 9); }
-    else { uint8_t p[13] = { 0x1d }; w32(p + 1, J.base); w32(p + 5, oid); w32(p + 9, (uint32_t)slot); dispatch(G, pl, p, 13); if (mode_of(old) == 4) pk_grid(G, pl, 0x18, oid, (int)ox, (int)oy, 0); }
+    else { uint8_t p[13] = { 0x1d }; w32(p + 1, J.base); w32(p + 5, oid); w32(p + 9, (uint32_t)slot); dispatch(G, pl, p, 13); if (mode_of(old) == 4) drop_cursor(G, pl, old); }   // 换下的旧件丢到脚下（用户的做法：穿上新的、丢掉旧的） | the replaced piece is dropped (the user's approach: wear the new one, drop the old)
     uint64_t d = rd(it + 0x10); int ok = mode_of(it) == 1 && d && *(uint8_t *)(uintptr_t)(d + 0x54) == slot;
-    LOG("一键配装：「%s」穿到装备位 %d %s；换下 id %u → %s", pc->what, slot, ok ? "成" : "【红】败", oid, !old ? "（原来空着）" : mode_of(old) == 0 ? "进背包" : "【红】没放好");
+    LOG("一键配装：「%s」穿到装备位 %d %s；换下 id %u → %s", pc->what, slot, ok ? "成" : "【红】败", oid, !old ? "（原来空着）" : mode_of(old) == 3 ? "丢在脚下" : mode_of(old) == 0 ? "进背包" : "【红】没放好");
     if (!ok && mode_of(it) == 4) pk_grid(G, pl, 0x18, J.base, nx, ny, 0);
     if (old && mode_of(old) == 4) { lo_stop("dmLoNoRoom", pc->what); return 0; }   // 旧件还在光标上：由 lo_tick 等有空位再放 | the old piece is still on the cursor: lo_tick puts it away once there is room
     if (!ok) { lo_stop("dmLoFail", pc->what); return 0; }
@@ -473,11 +479,11 @@ static int lo_equip_merc(uint64_t G, uint64_t pl, const lo_piece_t *pc) {
     uint64_t old = equipped(m, pc->slot); uint32_t ox = 0, oy = 0, oid = old ? *(uint32_t *)(uintptr_t)(old + 8) : 0xffffffffu;
     pk_grid(G, pl, 0x19, J.base, nx, ny, 0);
     if (mode_of(it) != 4) { lo_stop("dmLoFail", pc->what); return 0; }
-    if (old && !find_free(pl, old, &ox, &oy)) { pk_grid(G, pl, 0x18, J.base, nx, ny, 0); lo_stop("dmLoNoRoom", pc->what); return 0; }
+    (void)ox; (void)oy;   // 换下的旧件不要求背包有空位：丢到脚下 | a replaced piece needs no bag space: it is dropped
     uint8_t p[17] = { 0x51 }; w32(p + 1, J.base); w32(p + 5, *(uint32_t *)(uintptr_t)(m + 8)); w32(p + 9, oid); w32(p + 13, pc->slot); int rc = dispatch(G, pl, p, 17);
-    if (old && mode_of(old) == 4) pk_grid(G, pl, 0x18, oid, (int)ox, (int)oy, 0);
+    if (old && mode_of(old) == 4) drop_cursor(G, pl, old);
     int ok = equipped(m, pc->slot) == it;
-    LOG("一键配装：「%s」给佣兵穿到装备位 %d %s（分发 %d）；换下 id %u → %s", pc->what, pc->slot, ok ? "成" : "【红】败", rc, old ? oid : 0, !old ? "（原来空着）" : mode_of(old) == 0 ? "进背包" : "【红】没放好");
+    LOG("一键配装：「%s」给佣兵穿到装备位 %d %s（分发 %d）；换下 id %u → %s", pc->what, pc->slot, ok ? "成" : "【红】败", rc, old ? oid : 0, !old ? "（原来空着）" : mode_of(old) == 3 ? "丢在脚下" : mode_of(old) == 0 ? "进背包" : "【红】没放好");
     if (!ok && mode_of(it) == 4) pk_grid(G, pl, 0x18, J.base, nx, ny, 0);
     if (old && mode_of(old) == 4) { lo_stop("dmLoNoRoom", pc->what); return 0; }
     if (!ok) { lo_stop("dmLoFail", pc->what); return 0; }
