@@ -42,6 +42,7 @@
 #include <string.h>
 
 void dm_runeword_auto(uint32_t base_id, int rec);   // dm_runeword.c
+void dm_runeword_auto_cancel(void);                // dm_runeword.c
 int dm_runeword_inv_open(void);                     // dm_runeword.c
 int dm_runeword_busy(void);                         // dm_runeword.c
 typedef struct lo_piece lo_piece_t;                 // 一键配装的一件（定义在下面「一键配装」一节） | one loadout piece (defined in the loadout section below)
@@ -210,6 +211,14 @@ static int dispatch(uint64_t G, uint64_t pl, const uint8_t *p, uint32_t n);
 static int pk_grid(uint64_t G, uint64_t pl, int op, uint32_t id, int x, int y, int page);
 static int find_free(uint64_t pl, uint64_t it, uint32_t *x, uint32_t *y);
 static uint64_t cursor_item(uint64_t pl);
+// 免等级表清零后仍剩的需求等级（云端测试 10.1：战争召唤 6 级，来源未查清，推测是附带的野蛮人技能），用属性 92（物品需求等级加减）抵掉；写进物品自己存档的那张表
+// Required level left after the level-free tables are zeroed (cloud test 10.1: Call to Arms needs 6, source not traced, presumably its Barbarian skills) is cancelled with stat 92 (item required level adjustment), written into the item's own saved list
+static void lvl_fix(uint64_t it, uint64_t pl) {
+    int req = ((int (*)(uint64_t, uint64_t))(B + 0x571580))(it, pl); if (req <= 1) return;
+    uint64_t d = rd(it + 0x10); int rw = d && (*(uint32_t *)(uintptr_t)(d + 0x18) & 0x04000000); uint64_t M = affix_list(it, rw); uint8_t v = *(uint8_t *)(uintptr_t)(it + 0x1bd); if (!M) return;
+    int cur = ((int (*)(uint8_t, uint64_t, int, int))(B + 0x5bc690))(v, M, 92, 0); ((int (*)(uint8_t, uint64_t, int, int, int))(B + 0x5bbe20))(v, M, 92, cur - req, 0);
+    LOG("刷装备：id %u 需求等级 %d → 属性 92 写 %d → 读回需求等级 %d", *(uint32_t *)(uintptr_t)(it + 8), req, cur - req, ((int (*)(uint64_t, uint64_t))(B + 0x571580))(it, pl));
+}
 // 捡进背包：返回 1 = 进了（模式 0），0 = 还在地上 | pick up into the inventory: 1 = in (mode 0), 0 = still on the ground
 static int pick_up(uint64_t G, uint64_t player, uint64_t it) {
     uint64_t ip = rd(it + 0x38); if (!ip) return 0; uint8_t pk[17] = { 0x16 }; uint32_t one = 1;
@@ -251,7 +260,7 @@ static uint64_t make_ready2(uint64_t G, uint64_t player, const char *code4, int 
     int rw_base_item = q == 2 && sockets > 0;
     if (g_aff && rw_base_item) g_aff = NULL;
     if (g_aff) { const struct lo_aff *a = g_aff; g_aff = NULL; if (!apply_list(it, 0, a)) g_aff_bad = 1; }   // 一键配装：捡起前写词缀，捡起时整件发给客户端（在去需求之前：定制件要先清表） | loadout: affixes written before pick-up, so the whole item goes to the client on pick-up (before the requirement removal: custom pieces wipe the list first)
-    if (q != 2) no_req(it);   // 符文本身没有力量 / 敏捷需求，不写 | runes have no strength / dexterity requirement, left alone
+    if (q != 2) { no_req(it); lvl_fix(it, player); }   // 符文本身没有力量 / 敏捷需求，不写 | runes have no strength / dexterity requirement, left alone
     LOG("刷装备：%.4s 物品版本 %u（游戏 %u），需求等级 %d，属性 91 有效值 %d", code4, *(uint8_t *)(uintptr_t)(it + 0x1bd), *(uint8_t *)(uintptr_t)(G + 0x106),
         ((int (*)(uint64_t, uint64_t))(B + 0x571580))(it, player), gs(it, 91));
     *in_bag = pick_up(G, player, it);
@@ -348,6 +357,18 @@ static int apply_list(uint64_t it, int rw, const struct lo_aff *a) {
             if (!hit) break; }
         set(v, M, s->stat, s->value, s->layer); if (get(v, M, s->stat, s->layer) != s->value) { LOG("【红】一键配装：「%s」属性 %u/%u 读回 %d（要 %d）", a->what, s->stat, s->layer, get(v, M, s->stat, s->layer), s->value); bad++; } }
     LOG("一键配装：「%s」%s词缀表：清掉 %d 条，写 %d 条，问题 %d 处", a->what, rw ? "符文之语" : "物品", cleared, a->n, bad);
+    return !bad;
+}
+// 成词满值写完后，把底材附加加到同键当前值；调用方每件只走一次 | after max rolls, add base extras to each key's current value; the caller runs this once per piece
+static int add_list(uint64_t it, const struct lo_aff *a) {
+    uint64_t M = affix_list(it, 1); uint8_t v = *(uint8_t *)(uintptr_t)(it + 0x1bd); if (!M) { LOG("【红】一键配装：「%s」找不到词缀表", a->what); return 0; }
+    int (*set)(uint8_t, uint64_t, int, int, int) = (int (*)(uint8_t, uint64_t, int, int, int))(B + 0x5bbe20);
+    int (*get)(uint8_t, uint64_t, int, int) = (int (*)(uint8_t, uint64_t, int, int))(B + 0x5bc690);
+    int bad = 0;
+    for (int k = 0; k < a->n; k++) { const lo_stat_t *s = &a->st[k]; int before = get(v, M, s->stat, s->layer), want = before + s->value;
+        set(v, M, s->stat, want, s->layer); int got = get(v, M, s->stat, s->layer);
+        if (got != want) { LOG("【红】一键配装：「%s」属性 %u/%u 叠加读回 %d（要 %d + %d = %d）", a->what, s->stat, s->layer, got, before, s->value, want); bad++; } }
+    LOG("一键配装：「%s」符文之语词缀表：叠加底材 %d 条，问题 %d 处", a->what, a->n, bad);
     return !bad;
 }
 
@@ -468,11 +489,11 @@ static int lo_sock(uint64_t G, uint64_t pl, const lo_piece_t *pc) {
     if (++J.k == J.nr) { uint64_t d = rd(b + 0x10); int rw = d && (*(uint32_t *)(uintptr_t)(d + 0x18) & 0x04000000);
         LOG("一键配装：「%s」镶完，成词标志 %s", pc->what, rw ? "有" : pc->kind == LK_RUNEWORD ? "【红】没有" : "（不是符文之语）");
         if (pc->kind == LK_RUNEWORD && !rw) { lo_stop("dmLoFail", pc->what); return 0; }
-        if (pc->kind == LK_RUNEWORD) { struct lo_aff ab = { pc->what, pc->bst, pc->nbst, 0 };   // 成词后再写底材自带词缀与去需求（见 make_ready2） | base extras and requirement removal only after the word forms (see make_ready2)
-            if (pc->nbst && !apply_list(b, 0, &ab)) { lo_stop("dmLoFail", pc->what); return 0; }
-            no_req(b); }
-        struct lo_aff a = { pc->what, pc->st, pc->nst, 0 };   // 满值写进成词那张表；穿上时整件重发给客户端 | max rolls into the runeword list; the whole item is resent to the client when equipped
-        if (pc->kind == LK_RUNEWORD && pc->nst && !apply_list(b, 1, &a)) { lo_stop("dmLoFail", pc->what); return 0; } }
+        if (pc->kind == LK_RUNEWORD) { struct lo_aff a = { pc->what, pc->st, pc->nst, 0 }, ab = { pc->what, pc->bst, pc->nbst, 0 };
+            // 最后一颗成功后只走一次：先满值，再在同张成词表叠加底材 | run once after the last socket succeeds: max rolls first, then add base extras in the same runeword list
+            if (pc->nst && !apply_list(b, 1, &a)) { lo_stop("dmLoFail", pc->what); return 0; }
+            if (pc->nbst && !add_list(b, &ab)) { lo_stop("dmLoFail", pc->what); return 0; }
+            no_req(b); } }
     return 1;
 }
 // 穿：0x19 新件到光标 → 空位 0x1a / 有旧件 0x1d 互换 → 0x18 旧件进背包空格，同一拍 | equip: 0x19 new piece to the cursor -> 0x1a into an empty slot / 0x1d swap with the old one -> 0x18 old one into a free cell, same tick
@@ -519,10 +540,10 @@ static int lo_equip_merc(uint64_t G, uint64_t pl, const lo_piece_t *pc) {
 }
 // 符文之语改走 dm_runeword.c 的一键合成（客户端 0x19 / 0x28，真机验证过）：build 14.1 / 15.1 真机上，配装自己在服务端发 0x28，
 // 正义之手前 3 颗进孔、会成词的第 4 颗被退回光标；同一件从「装备」页生成、走一键合成能成词（用户实测）。等底材出现成词标志 0x04000000，
-// 再写底材自带词缀、去力量 / 敏捷需求、符文之语满值，然后去穿。约 30 秒没成词就停
+// 再写符文之语满值、叠加底材自带词缀、去力量 / 敏捷需求，然后去穿。空闲时等约 30 秒，合成仍忙则最多等约 60 秒
 // Runewords now go through dm_runeword.c's one-tap crafting (client 0x19 / 0x28, verified on device): on device in builds 14.1 / 15.1, with the loadout sending 0x28 itself on the server,
 // Hand of Justice took 3 runes and the 4th, which forms the word, was returned to the cursor; the same piece created from the "Items" page and crafted by one-tap crafting formed (user test). Wait for the runeword flag 0x04000000 on the base,
-// then write the base extras, remove strength / dexterity requirements and the runeword max rolls, then equip. Stop after about 30 s without a word
+// then write max rolls, add base extras and remove strength / dexterity requirements, then equip. Wait about 30 s when idle, or at most about 60 s while crafting remains busy
 static int rw_row_key(uint64_t G, const char *key) {
     uint64_t T = tables(G), rr = T ? rd(T + 0x1880) : 0; uint32_t rn = T ? *(uint32_t *)(uintptr_t)(T + 0x1888) : 0;
     for (uint32_t k = 0; rr && k < rn && k < 4096; k++) if (!strncmp((const char *)(uintptr_t)(rr + (uint64_t)k * 0xe8), key, 64)) return (int)k;
@@ -535,19 +556,23 @@ static int lo_rwjob(uint64_t G, uint64_t pl, const lo_piece_t *pc) {
     // 成词标志服务端先出；客户端那边的一键合成还要收尾（读回、放下光标），等它整个结束再往下做，不然下一件抢背包格（云端测试 4.1：巨龙盾背包放不下）
     // The word flag shows on the server first; the client-side one-tap crafting still has to finish (readback, cursor), so wait until it has fully ended before going on, or the next piece races for inventory cells (cloud test 4.1: no room for the Dragon shield)
     if (!d || !(*(uint32_t *)(uintptr_t)(d + 0x18) & 0x04000000) || dm_runeword_busy()) {
-        if (++J.backtry > 750 && (!dm_runeword_busy() || J.backtry > 1500)) { LOG("一键配装：「%s」30 秒没成词", pc->what); lo_stop("dmLoFail", pc->what); } return 0; }
+        if (++J.backtry > 750 && (!dm_runeword_busy() || J.backtry > 1500)) {
+            LOG("一键配装：「%s」等了 %d 拍（约 %d 秒）仍未完成成词", pc->what, J.backtry, J.backtry / 25);
+            dm_runeword_auto_cancel(); atomic_store(&g_lo_busy, 1); lo_stop("dmLoFail", pc->what); } return 0; }
     atomic_store(&g_lo_busy, 1); LOG("一键配装：「%s」成词", pc->what);
     struct lo_aff ab = { pc->what, pc->bst, pc->nbst, 0 }, a = { pc->what, pc->st, pc->nst, 0 };
     // 普通品质底材成词后没有物品词缀表（19.1 真机：找不到词缀表），底材附加也写进成词那张表（0xab，同样存档）；写不上只记红字，照样穿上做下一件
     // A normal base has no item affix list after the word forms (19.1 on device: no affix list), so base extras also go into the runeword list (0xab, also saved); a failed write is only logged in red, the piece is still equipped and the loadout continues
-    if (pc->nbst && !apply_list(b, 1, &ab)) LOG("【红】一键配装：「%s」底材附加没写全，照样穿上", pc->what);
-    no_req(b);
     if (pc->nst && !apply_list(b, 1, &a)) LOG("【红】一键配装：「%s」符文之语满值没写全，照样穿上", pc->what);
+    if (pc->nbst && !add_list(b, &ab)) LOG("【红】一键配装：「%s」底材附加没写全，照样穿上", pc->what);
+    no_req(b); lvl_fix(b, pl);
     J.backtry = 0; return 1;
 }
 static void lo_tick(uint64_t G, uint64_t pl) {
     uint32_t pid = *(uint32_t *)(uintptr_t)(pl + 8);
-    if (J.G && (J.G != G || J.pid != pid)) { LOG("一键配装：换局或换角色，旧任务作废（停在第 %d 件）", J.i); memset(&J, 0, sizeof J); }
+    if (J.G && (J.G != G || J.pid != pid)) { LOG("一键配装：换局或换角色，旧任务作废（停在第 %d 件）", J.i);
+        dm_runeword_auto_cancel(); g_rwpend = 0; atomic_store(&g_lo_busy, 0); memset(&J, 0, sizeof J); }
+    J.G = G; J.pid = pid;   // 空闲时也记住局与角色，单件请求同样需要换局清理 | track the game and character even while idle, so single-item requests are cleared on a change too
     if (J.st == LO_IDLE) {
         if (!atomic_exchange(&g_lo_req, 0)) { atomic_store(&g_lo_busy, 0); return; }
         if (!dm_runeword_inv_open()) { lo_notice("dmLoOpenInv", NULL); return; }
@@ -589,13 +614,12 @@ static void lo_tick(uint64_t G, uint64_t pl) {
 static void rw_post(uint64_t G, uint64_t player) {
     if (!g_rwpend) return; uint32_t t = *(uint32_t *)(uintptr_t)(G + 0x170);
     uint64_t it = own_item(player, g_rwpend), d = it ? rd(it + 0x10) : 0;
-    if (d && (*(uint32_t *)(uintptr_t)(d + 0x18) & 0x04000000)) { no_req(it); resend(G, player, it); LOG("刷装备：符文之语 id %u 成词后去需求", g_rwpend); g_rwpend = 0; return; }
+    if (d && (*(uint32_t *)(uintptr_t)(d + 0x18) & 0x04000000)) { no_req(it); lvl_fix(it, player); resend(G, player, it); LOG("刷装备：符文之语 id %u 成词后去需求", g_rwpend); g_rwpend = 0; return; }
     if (t - g_rwpend_at > 25 * 120) { LOG("刷装备：符文之语 id %u 2 分钟没成词，不再等", g_rwpend); g_rwpend = 0; }
 }
 void dm_itemgen_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
     B = main_base; if (!G || !player) return;
     lv_apply();
-    rw_post(G, player);
     { static int t = -1; if (t < 0) t = getenv("DM_TEST_LOADOUT") != NULL;   // 云端自动测试：物品栏一开就点一次一键配装 | cloud test run: tap the loadout once as soon as the inventory is open
       if (t == 1 && J.st == LO_IDLE && dm_runeword_inv_open()) {
           // DM_TEST_LOADOUT=empty：先把背包里的东西全丢到脚下，测试从空背包起跑（只在云端测试副本上用）
@@ -606,8 +630,10 @@ void dm_itemgen_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
               LOG("DM_TEST_LOADOUT：背包 %d 件丢到脚下", n); }
           t = 2; LOG("DM_TEST_LOADOUT：物品栏开着 → 点一键配装"); dm_itemgen_loadout(); } }
     lo_tick(G, player);
+    rw_post(G, player);   // 先清换局旧请求，再按 id 找成词物品 | clear old-session requests before looking up a formed item by id
     if (J.st != LO_IDLE) return;   // 配装进行中不接单件请求 | no single-item requests while a loadout runs
-    int r = atomic_exchange(&g_req, -1); if (r < 0) return;
+    int r = atomic_load(&g_req); if (r < 0 || ((r >> 16) == DM_ITEM_RUNEWORD && (g_rwpend || dm_runeword_busy()))) return;
+    if (!atomic_compare_exchange_strong(&g_req, &r, -1)) return;   // 只领取刚校验过的请求，新点击留到下一拍 | claim only the request just checked; a newer tap waits for the next tick
     int kind = r >> 16, i = r & 0xffff; LOG("刷装备：请求 种类 %d 第 %d 条「%s」", kind, i, dm_itemgen_name(kind, i));
     spawn(G, player, kind, i);
 }

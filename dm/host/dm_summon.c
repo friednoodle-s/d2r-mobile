@@ -68,7 +68,8 @@ static void cfg_load(void) {
     LOG("召唤：参数 bind=%d restore=%d hp_pct=%d bind_level=%d bind_init=%d skill=%d multi=%d", C.bind, C.restore, C.hp_pct, C.level, C.init, C.skill, C.multi);
 }
 
-static _Atomic int g_req_boss = -1, g_req_n, g_req_clear, g_req_op, g_req_arg, g_god, g_infmp, g_alive, g_buffs;
+static _Atomic uint64_t g_req_summon = UINT64_MAX, g_req_cheat = UINT64_MAX;   // 高 32 位类型、低 32 位参数；UINT64_MAX = 无请求 | high 32 bits type, low 32 bits argument; UINT64_MAX = no request
+static _Atomic int g_req_clear, g_god, g_infmp, g_alive, g_buffs;
 static uint8_t *B;
 // 名单与逐拍快照：查「随从满血突然死」用。每拍对比 模式 / 是否在宠物表 / +0x124 / 主人 id，有变化就记一行；死前最后一次变化就是线索
 // List and per-tick snapshot, for chasing "the minion suddenly dies at full life": every tick compare mode / on the pet table / +0x124 / owner id and log a line on any change; the last change before death is the clue
@@ -77,9 +78,9 @@ static _Atomic int g_bindmode;   // 面板「绑定类型」：0 骷髅复生（
 static uint32_t g_ids[MAX_KEEP]; static int g_hp[MAX_KEEP], g_nids;   // 我们刷出来的单位 id 与上一拍的生命（×256；服务端线程独占） | unit ids we spawned and their life on the previous tick (×256; owned by the server thread)
 static uint64_t g_G;                                  // 换局（游戏对象变了）就清名单 | a new run (the game object changed) clears the list
 
-void dm_summon_request(int boss, int count) { if (boss < 0 || boss >= DM_SUM_NBOSS) return; if (count < 1) count = 1; if (count > 10) count = 10; atomic_store(&g_req_n, count); atomic_store(&g_req_boss, boss); }
+void dm_summon_request(int boss, int count) { if (boss < 0 || boss >= DM_SUM_NBOSS) return; if (count < 1) count = 1; if (count > 10) count = 10; atomic_store(&g_req_summon, (uint64_t)(uint32_t)boss << 32 | (uint32_t)count); }
 void dm_summon_clear(void) { atomic_store(&g_req_clear, 1); }
-void dm_cheat_request(int op, int arg) { atomic_store(&g_req_arg, arg); atomic_store(&g_req_op, op); }
+void dm_cheat_request(int op, int arg) { atomic_store(&g_req_cheat, (uint64_t)(uint32_t)op << 32 | (uint32_t)arg); }
 void dm_cheat_set_god(int on) { atomic_store(&g_god, !!on); }
 void dm_cheat_set_inf_mana(int on) { atomic_store(&g_infmp, !!on); }
 int dm_cheat_god(void) { return atomic_load(&g_god); }
@@ -319,10 +320,10 @@ void dm_summon_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
     B = main_base; if (!G || !player) return;
     if (G != g_G) { g_G = G; g_nids = 0; }
     test_acts(G, player);
-    int boss = atomic_exchange(&g_req_boss, -1); if (boss >= 0) summon(G, player, boss, atomic_load(&g_req_n));
+    uint64_t req = atomic_exchange(&g_req_summon, UINT64_MAX); if (req != UINT64_MAX) summon(G, player, (int)(req >> 32), (int)(uint32_t)req);
     { void dm_itemgen_tick(uint64_t, uint64_t, uint8_t *); dm_itemgen_tick(G, player, main_base); }   // 刷装备（dm_itemgen.c） | item spawner (dm_itemgen.c)
     if (atomic_exchange(&g_req_clear, 0)) clear_all(G, player);
-    int op = atomic_exchange(&g_req_op, 0); if (op) cheat(player, op, atomic_load(&g_req_arg));
+    req = atomic_exchange(&g_req_cheat, UINT64_MAX); if (req != UINT64_MAX) cheat(player, (int32_t)(uint32_t)(req >> 32), (int32_t)(uint32_t)req);
     uint32_t m = *(uint32_t *)(uintptr_t)(player + 0xc);
     if (m != 0 && m != 12 && m != 17) {   // 玩家没在死：无敌 / 无限法力每拍补满 | player not dying: god mode / infinite mana top up every tick
         if (atomic_load(&g_god)) { int mx = gs(player, 7); if (gs(player, 6) < mx) ss(player, 6, mx); }

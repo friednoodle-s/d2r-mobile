@@ -661,19 +661,23 @@ static _Atomic uint64_t g_auto;   // 底材 id << 32 | 表行 + 1；0 = 没有 |
 void dm_runeword_auto(uint32_t base_id, int rec) { atomic_store(&g_auto, (uint64_t)base_id << 32 | (uint32_t)(rec + 1)); }
 int dm_runeword_auto_pending(void) { return atomic_load(&g_auto) != 0; }
 int dm_runeword_inv_open(void) { return atomic_load(&g_inv_open); }   // 一键配装（dm_itemgen.c）要物品栏开着：光标上过手的东西客户端才不会自己丢地上 | one-click loadout (dm_itemgen.c) needs the inventory open, so the client does not drop what passes through the cursor
-int dm_runeword_busy(void) { return g_job.st != 0 || atomic_load(&g_auto) != 0; }   // 一键合成进行中或有待合成：一键配装不开工（两边都动光标） | one-tap crafting running or pending: the loadout does not start (both use the cursor)
+int dm_runeword_busy(void) { return atomic_load(&g_auto) != 0 || __atomic_load_n(&g_job.st, __ATOMIC_ACQUIRE) != 0; }   // 先读待合成，再读运行态，覆盖请求交接窗口 | read pending before running to cover the request handoff window
+static _Atomic int g_cancel;   // 服务端要求停掉一键合成：由客户端主线程在 dm_runeword_pump 里自己停（job_stop 动客户端光标与界面，不能在服务端线程调） | the server asks to stop one-tap crafting: the client main thread stops it itself in dm_runeword_pump (job_stop touches the client cursor and UI, not callable on the server thread)
+void dm_runeword_auto_cancel(void) { atomic_store(&g_auto, 0); atomic_store(&g_cancel, 1); }
 static void auto_pump(uint8_t *b) {
     uint64_t a = atomic_load(&g_auto); if (!a || g_job.st || g_list.open || !item_panel_open(b) || dm_itemgen_busy()) return;
     uint32_t base = (uint32_t)(a >> 32); int rec = (int)(uint32_t)a - 1; uint64_t it = unit_item(b, base);
-    if (!it) { static int miss; if (++miss < 300) return; miss = 0; atomic_store(&g_auto, 0); LOG("符文之语：自动合成找不到底材 id %u，放弃", base); return; }
-    atomic_store(&g_auto, 0);
-    if (!build_list(b, it)) { LOG("符文之语：自动合成 底材 id %u 不匹配任何符文之语", base); return; }
+    if (!it) { static int miss; if (++miss < 300) return; miss = 0;
+        if (atomic_compare_exchange_strong(&g_auto, &a, 0)) LOG("符文之语：自动合成找不到底材 id %u，放弃", base); return; }
+    if (!build_list(b, it)) { atomic_compare_exchange_strong(&g_auto, &a, 0); LOG("符文之语：自动合成 底材 id %u 不匹配任何符文之语", base); return; }
     g_list.base = base; int row = -1; for (int i = 0; i < g_list.n; i++) if (g_list.c[i].rec == rec) row = i;
     LOG("符文之语：自动合成 底材 id %u 表行 %d → 清单第 %d 行%s", base, rec, row, row >= 0 && g_list.c[row].ok ? "（可做）" : "（不可做）");
     if (row >= 0) job_start(b, row);
+    atomic_compare_exchange_strong(&g_auto, &a, 0);   // job_start 已先发布运行态，只清自己读到的请求 | job_start has published the running state; clear only the request we read
 }
 void dm_runeword_pump(void) {   // 取手柄处每帧调（游戏主线程，dm_actions_pump 转来） | Called every frame at the controller sampling point (game main thread, forwarded from dm_actions_pump)
     uint8_t *b = rb(); if (!b) return;
+    if (atomic_exchange(&g_cancel, 0) && g_job.st) job_stop("自动合成已取消", 0);
     auto_pump(b);
     if (g_list.open && dm_ui_unstable()) return;   // 界面正在重建：这一帧不排版、不找控件 | The UI is rebuilding: no layout and no widget lookup this frame
     if (w_stale()) { int was = g_list.open; g_list.open = 0; memset(&W, 0, sizeof W); W.b = b; g_check_at = 0; if (was) LOG("符文之语：界面重建过（界面代号变了）→ 清单当作已关，缓存的控件作废"); }
