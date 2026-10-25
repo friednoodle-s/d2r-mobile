@@ -50,11 +50,8 @@ static void cfg_load(void) {
     const char *c = dm_save_commitdir(); if (!c) return; char p[1100]; snprintf(p, sizeof p, "%s/../dm_summon.txt", c);
     FILE *f = fopen(p, "r");
     if (!f) { if (!(f = fopen(p, "w"))) return;
-        fprintf(f, "# 召唤控制台参数：改完保存，下一次召唤生效 | summon console tunables: save, takes effect on the next summon
-");
-        for (size_t i = 0; i < sizeof k_cfg / sizeof *k_cfg; i++) fprintf(f, "# %s
-%s=%d
-", k_cfg[i].note, k_cfg[i].key, *k_cfg[i].v);
+        fprintf(f, "# 召唤控制台参数：改完保存，下一次召唤生效 | summon console tunables: save, takes effect on the next summon\n");
+        for (size_t i = 0; i < sizeof k_cfg / sizeof *k_cfg; i++) fprintf(f, "# %s\n%s=%d\n", k_cfg[i].note, k_cfg[i].key, *k_cfg[i].v);
         fclose(f); LOG("召唤：写出缺省参数文件 %s", p); return; }
     char ln[256]; while (fgets(ln, sizeof ln, f)) { if (ln[0] == '#') continue; char k[32]; int v;
         if (sscanf(ln, " %31[a-z_] = %d", k, &v) != 2) continue;
