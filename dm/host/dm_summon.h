@@ -21,6 +21,7 @@ void dm_cheat_set_buff(int buff, int on);
 int dm_cheat_buff(int buff);
 const char *dm_cheat_buff_key(int buff);       // 开关名字的串表键 | string table key of the toggle name
 int dm_summon_alive(void);                     // 界面显示：现存的召唤首领数（上一拍数的） | for the UI: number of summoned bosses alive (counted on the previous tick)
+int dm_summon_owns(uint32_t id);               // 这个怪物单位是我们召唤出来的（刷怪积分牌不计、不提示；服务端线程） | this monster unit was summoned by us (not counted or announced by the kill board; server thread)
 const char *dm_summon_key(int boss);           // 首领名字的串表键（界面用 dm_ui 取） | string table key of the boss name (the UI looks it up with dm_ui)
 
 void dm_summon_tick(uint64_t game, uint64_t player, uint8_t *main_base);   // 服务端每拍调（diag.c hud_tick） | called every server tick (diag.c hud_tick)

@@ -36,7 +36,11 @@ static const struct { int cls; const char *key; } k_boss[DM_SUM_NBOSS] = {
 // 每次召唤前重读，改完文件下一次召唤就生效，不用重新构建；没有文件就按缺省写一份出来给玩家改
 // Tunables: dm_summon.txt next to the save directory (on iOS in the D2R Mobile folder of the Files app, same as sw_custom.txt), one "key=integer" per line, # starts a comment.
 // Re-read before every summon, so an edited file takes effect on the next summon without a rebuild; if there is no file, one with the defaults is written out for the player to edit
-static struct { int bind, restore, hp_pct, level, init, skill, multi; } C = { 1, 1, 100, 20, 1, 382, 1 };
+// skill 缺省 70（骷髅复生的宠物类型）：用束缚恶魔（382）的类型时，首领绑上 1–2 秒后就被原版整只注销（真机日志：死前一拍满血，+0x124 带 0x6c0f50 置的 0x04000000）
+// skill defaults to 70 (Raise Skeleton's pet type): with Bind Demon's (382) type the boss was unregistered whole by the original 1–2 s after binding (device log: full life on the tick before death, +0x124 carrying the 0x04000000 that 0x6c0f50 sets)
+#define CFG_VER 2   // 缺省值改了就加 1：文件里的 cfgver 比它小就整份按新缺省重写（iPad 的「文件」App 改不了 txt，玩家没法自己改回） | bump when defaults change: a file whose cfgver is lower is rewritten whole with the new defaults (the iPad Files app cannot edit txt, so players cannot fix it themselves)
+#define CFG_DEFAULTS { 1, 1, 100, 20, 1, 70, 1, CFG_VER }
+static struct { int bind, restore, hp_pct, level, init, skill, multi, ver; } C = CFG_DEFAULTS, C0 = CFG_DEFAULTS;   // C 在第一次召唤读文件之前也要有缺省（清除、宠物表查找都读 C.skill） | C needs defaults before the first summon reads the file too (clear-all and the pet table lookup read C.skill)
 static const struct { const char *key; int *v, lo, hi; const char *note; } k_cfg[] = {
     { "bind", &C.bind, 0, 1, "1 = 刷出后转成随从；0 = 不转（敌对，测试用）| 1 = bind as minion after spawning; 0 = leave hostile (testing)" },
     { "restore", &C.restore, 0, 1, "1 = 转化后把等级和生命上限改回刷出时的值 | 1 = restore spawn-time level and max life after binding" },
@@ -44,19 +48,24 @@ static const struct { const char *key; int *v, lo, hi; const char *note; } k_cfg
     { "bind_level", &C.level, 1, 99, "转化用的技能等级（影响随从加成与数量上限）| skill level used for binding (affects minion bonuses and the count cap)" },
     { "bind_init", &C.init, 0, 1, "1 = 转化走原版施法的初始化（修饰、压等级）；0 = 跳过 | 1 = run the original cast init (mods, level cut); 0 = skip" },
     { "skill", &C.skill, 0, 1000, "转化用的技能号（382 = 束缚恶魔）| skill id used for binding (382 = Bind Demon)" },
+    { "cfgver", &C.ver, 0, 1000, "参数文件版本，别改 | tunables file version, do not edit" },
     { "multi", &C.multi, 0, 1, "1 = 允许同时多只（借骷髅复生的数量算式）；0 = 原版一次只留一只 | 1 = allow several at once (borrows Raise Skeleton's count formula); 0 = original, one at a time" },
 };
-static void cfg_load(void) {
-    const char *c = dm_save_commitdir(); if (!c) return; char p[1100]; snprintf(p, sizeof p, "%s/../dm_summon.txt", c);
-    FILE *f = fopen(p, "r");
-    if (!f) { if (!(f = fopen(p, "w"))) return;
+static void cfg_write(const char *p) {
+    FILE *f = fopen(p, "w"); if (!f) return;
         fprintf(f, "# 召唤控制台参数：改完保存，下一次召唤生效 | summon console tunables: save, takes effect on the next summon\n");
         for (size_t i = 0; i < sizeof k_cfg / sizeof *k_cfg; i++) fprintf(f, "# %s\n%s=%d\n", k_cfg[i].note, k_cfg[i].key, *k_cfg[i].v);
-        fclose(f); LOG("召唤：写出缺省参数文件 %s", p); return; }
+    fclose(f); LOG("召唤：写出缺省参数文件 %s", p);
+}
+static void cfg_load(void) {
+    C = C0; C.ver = 0;
+    const char *c = dm_save_commitdir(); if (!c) { C = C0; return; } char p[1100]; snprintf(p, sizeof p, "%s/../dm_summon.txt", c);
+    FILE *f = fopen(p, "r"); if (!f) { C = C0; cfg_write(p); return; }
     char ln[256]; while (fgets(ln, sizeof ln, f)) { if (ln[0] == '#') continue; char k[32]; int v;
         if (sscanf(ln, " %31[a-z_] = %d", k, &v) != 2) continue;
         for (size_t i = 0; i < sizeof k_cfg / sizeof *k_cfg; i++) if (!strcmp(k, k_cfg[i].key)) *k_cfg[i].v = v < k_cfg[i].lo ? k_cfg[i].lo : v > k_cfg[i].hi ? k_cfg[i].hi : v; }
-    fclose(f); LOG("召唤：参数 bind=%d restore=%d hp_pct=%d bind_level=%d bind_init=%d skill=%d multi=%d", C.bind, C.restore, C.hp_pct, C.level, C.init, C.skill, C.multi);
+    fclose(f); if (C.ver < CFG_VER) { LOG("召唤：参数文件版本 %d 旧了，按缺省重写", C.ver); C = C0; cfg_write(p); }
+    LOG("召唤：参数 bind=%d restore=%d hp_pct=%d bind_level=%d bind_init=%d skill=%d multi=%d", C.bind, C.restore, C.hp_pct, C.level, C.init, C.skill, C.multi);
 }
 
 static _Atomic int g_req_boss = -1, g_req_n, g_req_clear, g_req_op, g_req_arg, g_god, g_infmp, g_alive, g_buffs;
@@ -88,6 +97,7 @@ static const struct { const char *key; int n; int16_t st[4], v[4]; } k_buff[DM_N
 void dm_cheat_set_buff(int b, int on) { if (b < 0 || b >= DM_NBUFF) return; if (on) atomic_fetch_or(&g_buffs, 1 << b); else atomic_fetch_and(&g_buffs, ~(1 << b)); }
 int dm_cheat_buff(int b) { return b >= 0 && b < DM_NBUFF && (atomic_load(&g_buffs) >> b & 1); }
 const char *dm_cheat_buff_key(int b) { return b >= 0 && b < DM_NBUFF ? k_buff[b].key : ""; }
+int dm_summon_owns(uint32_t id) { for (int i = 0; i < g_nids; i++) if (g_ids[i] == id) return 1; return 0; }   // 服务端线程调（刷怪积分牌） | called from the server thread (kill board)
 const char *dm_summon_key(int boss) { return boss >= 0 && boss < DM_SUM_NBOSS ? k_boss[boss].key : ""; }
 
 static uint64_t rd(uint64_t a) { return a ? *(volatile uint64_t *)(uintptr_t)a : 0; }

@@ -7,7 +7,7 @@
 #include "dm_i18n.h"
 
 // 面板右下角的版本号：每次交给玩家测试的构建都改这里，截图里一眼看出装的是哪一版 | version shown at the panel's bottom-right: bumped for every build handed out for testing, so a screenshot shows which one is installed
-#define DM_SUMMON_UI_VER "summon console 6"
+#define DM_SUMMON_UI_VER "summon console 7"
 
 @interface DmSummonPanel : NSObject
 @property (nonatomic, strong) UIButton *fab;

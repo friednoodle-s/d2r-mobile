@@ -2,7 +2,7 @@
 //   计数：服务端怪物表（G+0x2230 + 类型 1 × 0x400）里名单上的怪，活着时见过、模式变 0（死亡中）/ 12（已死）那一拍算死一次。
 //     认法：关底首领、血鸦等按类号（单位 +4）；超级独特按怪物数据（单位 +0x10）+0x2a 的超级独特编号——刷超级独特 0x69b310 写的
 //     （strh w22,[x8,#0x2a]），类型标志 +0x1a 位 1 = 超级独特。
-//     每局一张「见过的单位 id」表：同一只一局只计一次；第一次见到就是尸体的不计；首领连战本关刷出的（dm_bossrush_owns）不计、不提示。
+//     每局一张「见过的单位 id」表：同一只一局只计一次；第一次见到就是尸体的不计；首领连战本关刷出的（dm_bossrush_owns）、召唤控制台召出的（dm_summon_owns）不计、不提示。
 //     高庭理事会（伊斯梅尔 / 吉勒布 / 托克）与三位先祖（塔力克 / 马道克 / 科里克）各算一行，同一局三只都计过死的那一拍加 1。
 //   最快用时：交战用时 = 第一次掉血那一拍 → 死亡那一拍（游戏拍，25 拍 / 秒）；回满血从头算；一组的按「第一只掉血 → 最后一只死」。
 //   提示（原版系统提示框 + 聊天栏，dm_game_notice）：客户端单位表里第一次出现这只（一组算一次）→「<名>已累计击杀 N 次！」（N = 当前难度、不含这一次）；
@@ -23,6 +23,7 @@
 //     on exit without saving this part does not count, same as the original game's "progress is lost if not saved". The original save is not changed by a single byte.
 // Called only in the server tick (diag.c, after boss rush).
 #include "dm_bossrush.h"
+#include "dm_summon.h"
 #include "dm_input.h"
 #include "dm_cursor.h"
 #include "dm.h"
@@ -182,7 +183,7 @@ void dm_kills_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
         int e = 0; while (e < nE && E[e].id != id) e++;
         if (e == nE) { if (nE == (int)(sizeof E / sizeof *E)) { memmove(E, E + 1, sizeof E - sizeof *E); nE--; e--; }   // 表满丢最老的 | When the table is full, drop the oldest
             memset(&E[e], 0, sizeof *E); E[e].id = id; E[e].row = (int16_t)r; E[e].grp = (int8_t)grp; E[e].gm = (int8_t)gm; nE++;
-            E[e].skip = dead || dm_bossrush_owns(id); E[e].dead = (uint8_t)dead;
+            E[e].skip = dead || dm_bossrush_owns(id) || dm_summon_owns(id); E[e].dead = (uint8_t)dead;
             LOG("刷怪积分牌：拍 %u 见到 %s（单位 id %u，模式 %u%s）", t, k_rows[r].key, id, m, E[e].skip ? "，不计" : ""); }
         if (E[e].skip || E[e].dead) continue;
         alive_any = 1;
