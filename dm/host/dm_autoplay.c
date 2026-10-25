@@ -115,6 +115,7 @@ static int pick_wanted(uint64_t it, int mask) {
     uint64_t d = rd(it + 0x10); if (!d) return 0; int q = (int)rd32(d);
     if ((mask & 1) && (q == 5 || q == 7)) return 1;
     if ((mask & 2) && q == 6) return 1;
+    if (mask & 8) return 1;   // 测试用：什么都捡（面板不给这一位） | for tests: pick up everything (the panel does not offer this bit)
     if (mask & 4) { uint32_t c = ((uint32_t (*)(uint64_t))(B + 0x570260))(it); char s[5] = { (char)c, (char)(c >> 8), (char)(c >> 16), (char)(c >> 24), 0 }; if (s[0] == 'r' && s[1] >= '0' && s[1] <= '9' && s[2] >= '0' && s[2] <= '9') return 1; }
     return 0;
 }
@@ -155,7 +156,8 @@ void dm_autoplay_tick(uint64_t G, uint64_t pl, uint8_t *mb) {
         // 主攻 / 范围技能连着 3 次被原版拒绝（法力不够、距离、技能不许可…）就改用左手节点（一般是普通攻击）打这一下 | after 3 refusals in a row (mana, range, not allowed...) hit with the left-hand node (usually the plain attack) instead
         int r, aoe = ai >= 0 && near >= 3; uint64_t nd = S.refused >= 3 ? rd(rd(pl + 0x100) + 8) : skill_node(pl, aoe ? ai : atomic_load(&g_main));
         if (S.refused >= 3) { uint64_t sl = rd(pl + 0x100); r = sl && nd ? ((int (*)(uint64_t, uint64_t, uint32_t, uint32_t, uint64_t, int, int))(B + 0x6e7dc0))(G, pl, 1, id, nd, 1, 0) : -1; S.refused = 0; }
-        else r = aoe ? cast_at(G, pl, nd, bx, by) : cast_unit(G, pl, nd, id);
+        else { r = aoe ? cast_at(G, pl, nd, bx, by) : cast_unit(G, pl, nd, id);
+            if (aoe && r != 0) { aoe = 0; nd = skill_node(pl, atomic_load(&g_main)); r = cast_unit(G, pl, nd, id); } }   // 范围技能被拒（多半在冷却）当拍改放主攻 | area skill refused (usually its cooldown): cast the main skill this tick instead
         if (r < 0 && !nd) { stop("dmAutoNoSkill"); return; }
         if (r != 0) S.refused++; else S.refused = 0;
         { static int ln; if (ln++ < 40 || r != 0 && ln % 50 == 0) LOG("自动清图：%s 怪 id %u（距 %ld）→ 返回 %d，玩家模式 %u → %u，法力 %d", aoe ? "范围" : "主攻", id, (long)__builtin_sqrt((double)dd), r, pm, rd32(pl + 0xc), gs(pl, 8) >> 8); }
