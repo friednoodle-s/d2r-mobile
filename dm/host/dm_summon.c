@@ -25,12 +25,42 @@
 #include "dm_i18n.h"
 #include <stdatomic.h>
 #include <stdlib.h>
+#include <stdio.h>
 #include <string.h>
+
+const char *dm_save_commitdir(void);   // hle_fs.c
 
 static const struct { int cls; const char *key; } k_boss[DM_SUM_NBOSS] = {
     { 156, "dmBossAndariel" }, { 211, "dmBossDuriel" }, { 242, "dmBossMephisto" }, { 243, "dmBossDiablo" }, { 544, "dmBossBaal" } };   // monstats 行号同首领连战；名字是串表键（dm/i18n/ui_text.tsv） | monstats rows same as the boss rush; names are string table keys (dm/i18n/ui_text.tsv)
 #define MAX_KEEP 20                     // 同时在场的召唤首领上限：再多画面和性能都扛不住 | cap on summoned bosses alive at once: more than this is too much for the screen and performance
-#define BIND_SKILL 382                  // 束缚恶魔（原版调用点 0x7024c4 传的技能号） | Bind Demon (the skill id the original call site 0x7024c4 passes)
+// 可调参数：存档目录旁的 dm_summon.txt（iOS 在「文件」App 的 D2R Mobile 文件夹里，同 sw_custom.txt），一行一个「键=整数」，# 起是注释。
+// 每次召唤前重读，改完文件下一次召唤就生效，不用重新构建；没有文件就按缺省写一份出来给玩家改
+// Tunables: dm_summon.txt next to the save directory (on iOS in the D2R Mobile folder of the Files app, same as sw_custom.txt), one "key=integer" per line, # starts a comment.
+// Re-read before every summon, so an edited file takes effect on the next summon without a rebuild; if there is no file, one with the defaults is written out for the player to edit
+static struct { int bind, restore, hp_pct, level, init, skill; } C = { 1, 1, 100, 20, 1, 382 };
+static const struct { const char *key; int *v, lo, hi; const char *note; } k_cfg[] = {
+    { "bind", &C.bind, 0, 1, "1 = 刷出后转成随从；0 = 不转（敌对，测试用）| 1 = bind as minion after spawning; 0 = leave hostile (testing)" },
+    { "restore", &C.restore, 0, 1, "1 = 转化后把等级和生命上限改回刷出时的值 | 1 = restore spawn-time level and max life after binding" },
+    { "hp_pct", &C.hp_pct, 10, 10000, "改回时的生命上限百分比（100 = 原样，300 = 三倍）| max life percent when restoring (100 = as spawned, 300 = triple)" },
+    { "bind_level", &C.level, 1, 99, "转化用的技能等级（影响随从加成与数量上限）| skill level used for binding (affects minion bonuses and the count cap)" },
+    { "bind_init", &C.init, 0, 1, "1 = 转化走原版施法的初始化（修饰、压等级）；0 = 跳过 | 1 = run the original cast init (mods, level cut); 0 = skip" },
+    { "skill", &C.skill, 0, 1000, "转化用的技能号（382 = 束缚恶魔）| skill id used for binding (382 = Bind Demon)" },
+};
+static void cfg_load(void) {
+    const char *c = dm_save_commitdir(); if (!c) return; char p[1100]; snprintf(p, sizeof p, "%s/../dm_summon.txt", c);
+    FILE *f = fopen(p, "r");
+    if (!f) { if (!(f = fopen(p, "w"))) return;
+        fprintf(f, "# 召唤控制台参数：改完保存，下一次召唤生效 | summon console tunables: save, takes effect on the next summon
+");
+        for (size_t i = 0; i < sizeof k_cfg / sizeof *k_cfg; i++) fprintf(f, "# %s
+%s=%d
+", k_cfg[i].note, k_cfg[i].key, *k_cfg[i].v);
+        fclose(f); LOG("召唤：写出缺省参数文件 %s", p); return; }
+    char ln[256]; while (fgets(ln, sizeof ln, f)) { if (ln[0] == '#') continue; char k[32]; int v;
+        if (sscanf(ln, " %31[a-z_] = %d", k, &v) != 2) continue;
+        for (size_t i = 0; i < sizeof k_cfg / sizeof *k_cfg; i++) if (!strcmp(k, k_cfg[i].key)) *k_cfg[i].v = v < k_cfg[i].lo ? k_cfg[i].lo : v > k_cfg[i].hi ? k_cfg[i].hi : v; }
+    fclose(f); LOG("召唤：参数 bind=%d restore=%d hp_pct=%d bind_level=%d bind_init=%d skill=%d", C.bind, C.restore, C.hp_pct, C.level, C.init, C.skill);
+}
 
 static _Atomic int g_req_boss = -1, g_req_n, g_req_clear, g_req_op, g_req_arg, g_god, g_infmp, g_alive;
 static uint8_t *B;
@@ -68,13 +98,12 @@ static int in_town(int lv) { return lv == 1 || lv == 40 || lv == 75 || lv == 103
 //   Skill level: the level used by formulas such as BoundStat (the original takes the caster's skill level, clamped to [0, *[data table + 0x1500]]); link id: each time the original takes G+0x16c plus 1 (wrapping to 1 at INT_MAX), writes it back and passes it;
 //   initialize = 1: run the init block for a freshly bound target (monster mods, level brought down to the owner's level); the original cast path passes 1 (0x7ab940), the load-rebuild path passes 0 (0x7024c4).
 //   Skill record +0x112 is the pet type (out of range falls back to 21 = bound demon); 0x6c1b00 hooks it into the player's pet table
-#define BIND_LEVEL 20
 // 宠物表：[[玩家+0x10]+0x98] 起每种宠物类型一个 0x20 字节槽：+0 链头（节点 +4 单位 id、+0x18 下一个）、+8 数量、+0xc 上限（每次束缚由技能记录 +0x114 的算式重算，超了原版裁掉最旧的）
 // Pet table: from [[player+0x10]+0x98], one 0x20-byte slot per pet type: +0 chain head (node +4 unit id, +0x18 next), +8 count, +0xc cap (recomputed on every bind from the formula at skill record +0x114; above it the original trims the oldest)
 static uint64_t pet_slot(uint64_t G, uint64_t player) {
     uint8_t ver = *(uint8_t *)(uintptr_t)(G + 0x106); if (ver < 1 || ver > 3) return 0;
-    uint64_t T = rd((uint64_t)(uintptr_t)(B + 0x2d64a18 + ver * 16)); if (!T || rd(T + 0x11f0) <= BIND_SKILL) return 0;
-    uint64_t rec = rd(T + 0x11e8) + (uint64_t)BIND_SKILL * 0x2ec; uint32_t nt = *(uint32_t *)(uintptr_t)(T + 0x1300), ty = *(uint8_t *)(uintptr_t)(rec + 0x112);
+    uint64_t T = rd((uint64_t)(uintptr_t)(B + 0x2d64a18 + ver * 16)); if (!T || rd(T + 0x11f0) <= (uint64_t)C.skill) return 0;
+    uint64_t rec = rd(T + 0x11e8) + (uint64_t)C.skill * 0x2ec; uint32_t nt = *(uint32_t *)(uintptr_t)(T + 0x1300), ty = *(uint8_t *)(uintptr_t)(rec + 0x112);
     if (ty >= nt) ty = 21;   // 同 0x7aa5fc：越界回落束缚恶魔 | same as 0x7aa5fc: out of range falls back to bound demon
     uint64_t pd = rd(player + 0x10), lst = pd ? rd(pd + 0x98) : 0, arr = lst ? rd(lst) : 0; return arr ? arr + (uint64_t)ty * 0x20 : 0;
 }
@@ -82,7 +111,7 @@ static int is_pet(uint64_t slot, uint32_t id) { int k = 0; for (uint64_t nd = rd
 static int to_minion(uint64_t G, uint64_t player, uint64_t u) {
     int32_t *seq = (int32_t *)(uintptr_t)(G + 0x16c); int link = *seq == 0x7fffffff ? 1 : *seq + 1; *seq = link;
     uint32_t id = *(uint32_t *)(uintptr_t)(u + 8); int lv0 = gs(u, 12), mx0 = gsb(u, 7), full0 = gs(u, 7);
-    int r = ((int (*)(uint64_t, uint64_t, uint64_t, int, int, int, int))(B + 0x7aa190))(G, player, u, BIND_SKILL, BIND_LEVEL, link, 1) & 1;
+    int r = ((int (*)(uint64_t, uint64_t, uint64_t, int, int, int, int))(B + 0x7aa190))(G, player, u, C.skill, C.level, link, C.init) & 1;
     // 原版只在返回值上说「接受了」，挂没挂进宠物表不查（上限 0 时会直接清掉新目标）：按 id 回查宠物表才算数
     // The original's return value only says "accepted"; it does not check whether the pet table entry took (with a cap of 0 it clears the new target outright): it only counts after looking the id up in the pet table
     uint64_t slot = pet_slot(G, player); int in = r && slot && is_pet(slot, id);
@@ -91,10 +120,11 @@ static int to_minion(uint64_t G, uint64_t player, uint64_t u) {
     LOG("召唤：束缚 id %u → 返回 %d、宠物表%s；该类型 数量 %d 上限 %d", id, r, in ? "有" : "没有", slot ? *(int32_t *)(uintptr_t)(slot + 8) : -1, slot ? *(int32_t *)(uintptr_t)(slot + 0xc) : -1);
     // 束缚会按技能算式重算生命上限、把等级压到主人等级（0x7aa684 初始化块、0x79c130）：首领打一只怪就死（真机实测）。束缚完把等级、生命上限的基础项改回刷出时的值，再回满
     // Binding recomputes maximum life from the skill formulas and brings the level down to the owner's (init block at 0x7aa684, 0x79c130): the boss died after fighting one monster (measured on device). After binding, set the level and the base of maximum life back to their spawn values, then refill
-    if (in && find_unit(G, id) == u) {
+    if (in && C.restore && find_unit(G, id) == u) {
         int lv1 = gs(u, 12), mx1 = gsb(u, 7), full1 = gs(u, 7);
         if (lv1 < lv0) ss(u, 12, lv0);
-        if (mx0 > 0 && gsb(u, 7) < mx0) ss(u, 7, mx0);
+        long long want = (long long)mx0 * C.hp_pct / 100; if (want > 0x7fffff00) want = 0x7fffff00;   // 上限 0x7fffff00：再大溢出成负数，读出来成 1 点（同秘境） | cap 0x7fffff00: beyond it overflows negative and reads back as 1 point (same as the rift)
+        if (want > 0 && gsb(u, 7) != (int)want) ss(u, 7, (int)want);
         ss(u, 6, gs(u, 7));
         LOG("召唤：id %u 刷出时 等级 %d 生命上限 %d（基础 %d）→ 束缚后 等级 %d 上限 %d（基础 %d）→ 改回后 等级 %d 上限 %d 当前 %d", id, lv0, full0 >> 8, mx0 >> 8, lv1, full1 >> 8, mx1 >> 8, gs(u, 12), gs(u, 7) >> 8, gs(u, 6) >> 8);
     }
@@ -105,6 +135,7 @@ static void summon(uint64_t G, uint64_t player, int boss, int n) {
     int lv = dm_unit_level(player); uint64_t room = unit_room(player); int px, py;
     if (!lv || !room || !unit_xy(player, &px, &py)) return;
     if (in_town(lv)) { dm_game_notice(B, dm_str(B, "dmSumTown")); return; }
+    cfg_load();
     static const int8_t ring[10][2] = { {3,0}, {-3,0}, {0,3}, {0,-3}, {3,3}, {-3,-3}, {3,-3}, {-3,3}, {5,0}, {-5,0} };
     int ok = 0, conv = 0;
     for (int i = 0; i < n && g_nids < MAX_KEEP; i++) {
@@ -112,7 +143,7 @@ static void summon(uint64_t G, uint64_t player, int boss, int n) {
         uint64_t u = rr ? ((uint64_t (*)(uint64_t, uint64_t, int, int, int, int, int, int, uint64_t))(B + 0x7ce630))(G, rr, 1, k_boss[boss].cls, pos[0], pos[1], 1, 0, 0x10) : 0;
         if (!u) continue; ok++;
         *(uint32_t *)(uintptr_t)(u + 0x124) |= 0x20000;   // 不掉落：死了不出宝，也防清除时爆一地 | no drop: nothing on death, and no loot shower when cleared
-        int c = to_minion(G, player, u); conv += c;
+        int c = C.bind ? to_minion(G, player, u) : 0; conv += c || !C.bind;
         g_hp[g_nids] = gs(u, 6); g_ids[g_nids++] = *(uint32_t *)(uintptr_t)(u + 8);
         LOG("召唤：%s（类号 %d）id %u 在 %d,%d（玩家 %d,%d）→ 转随从%s", k_boss[boss].key, k_boss[boss].cls, *(uint32_t *)(uintptr_t)(u + 8), pos[0], pos[1], px, py, c ? "成" : "败");
     }
