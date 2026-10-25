@@ -508,9 +508,11 @@ static int lo_rwjob(uint64_t G, uint64_t pl, const lo_piece_t *pc) {
         if (++J.backtry > 750 && !dm_runeword_busy()) { LOG("一键配装：「%s」30 秒没成词", pc->what); lo_stop("dmLoFail", pc->what); } return 0; }
     atomic_store(&g_lo_busy, 1); LOG("一键配装：「%s」成词", pc->what);
     struct lo_aff ab = { pc->what, pc->bst, pc->nbst, 0 }, a = { pc->what, pc->st, pc->nst, 0 };
-    if (pc->nbst && !apply_list(b, 0, &ab)) { lo_stop("dmLoFail", pc->what); return 0; }
+    // 普通品质底材成词后没有物品词缀表（19.1 真机：找不到词缀表），底材附加也写进成词那张表（0xab，同样存档）；写不上只记红字，照样穿上做下一件
+    // A normal base has no item affix list after the word forms (19.1 on device: no affix list), so base extras also go into the runeword list (0xab, also saved); a failed write is only logged in red, the piece is still equipped and the loadout continues
+    if (pc->nbst && !apply_list(b, 1, &ab)) LOG("【红】一键配装：「%s」底材附加没写全，照样穿上", pc->what);
     no_req(b);
-    if (pc->nst && !apply_list(b, 1, &a)) { lo_stop("dmLoFail", pc->what); return 0; }
+    if (pc->nst && !apply_list(b, 1, &a)) LOG("【红】一键配装：「%s」符文之语满值没写全，照样穿上", pc->what);
     J.backtry = 0; return 1;
 }
 static void lo_tick(uint64_t G, uint64_t pl) {
