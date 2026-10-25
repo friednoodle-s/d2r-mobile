@@ -47,6 +47,7 @@ int dm_runeword_busy(void);                         // dm_runeword.c
 typedef struct lo_piece lo_piece_t;                 // 一键配装的一件（定义在下面「一键配装」一节） | one loadout piece (defined in the loadout section below)
 typedef struct { uint16_t stat, layer; int32_t value; } lo_stat_t;
 struct lo_aff;
+static uint32_t g_rwpend, g_rwpend_at;            // 刷装备页等成词的符文之语底材 id 与开始等的拍（rw_post） | base id of an item-page runeword awaiting its word, and the tick waiting began (rw_post)
 static const struct lo_aff *g_aff;                  // make_ready2 捡起前要写的词缀（只在服务端线程用） | affixes make_ready2 writes before pick-up (server thread only)
 static int g_aff_bad;                               // 上面那组写失败 | the group above failed
 static int apply_list(uint64_t it, int rw, const struct lo_aff *a);
@@ -134,16 +135,22 @@ static int rt_row(uint64_t G, int kind, int i) {
 // No level requirement (see the file header): the tables of all three versions ([main+0x2d64a18 + version×16], versions 1-3) are changed; originals are kept on the first enable, then zeroed, and written back on disable; a changed table pointer (reloaded tables) counts as a new table.
 // Not only the game version's table at G+0x106: the level function 0x571580 picks the table by the item's own version +0x1bd (0x5717e8-0x571800). Build 12.1 changed only the former, and on the device Lazarus Spire still required level 18 with the switch on;
 // a mismatch of the two versions is an inference not confirmed by a log, so after creation the item version, game version and the level read back from 0x571580 are logged
-static struct { uint64_t T; int on; uint32_t nu, ns, ni; int16_t *u, *s; uint8_t *it; } g_lv[4];
+// 0x571580 的全部来源（读码）：魔法 / 稀有词缀行（[数据表 + 0x1608]，条数 +0x1610，每条 0x8c；物品数据 +0x46 / +0x48 / +0x4e 等存词缀号）取 +0x65 需求等级，
+// 职业专属的取 +0x68（+0x67 = 职业）；物品上的技能词缀（属性 97 / 107，0x5bdf30 按技能号找）取技能表行 +0x214（build 14.1 真机：拉扎鲁斯的螺旋杖带连锁闪电，开着开关仍要 18 级）；
+// 再与暗金 +0x3a、套装 +0x36、物品表 +0x14f、孔内各件取最大。所以这几处一起清零。技能表 +0x214 同时是技能树的学习等级：开着时学技能也不受等级限制，关掉写回
+// All sources of 0x571580 (from reading the code): magic / rare affix rows ([data table + 0x1608], count +0x1610, 0x8c each; item data +0x46 / +0x48 / +0x4e etc. hold the affix ids) give +0x65 required level,
+// class-specific ones +0x68 (+0x67 = class); skill affixes on the item (stats 97 / 107, found by skill id via 0x5bdf30) give skill row +0x214 (build 14.1 device: Lazarus Spire carries Chain Lightning and still needed level 18 with the switch on);
+// then the max with unique +0x3a, set +0x36, item table +0x14f and each socketed item. So all of these are zeroed together. Skill row +0x214 is also the skill tree's learning level: while on, skills can be learned at any level too; off writes them back
+static struct { uint64_t T; int on; uint32_t nu, ns, ni, na, nk; int16_t *u, *s, *sk; uint8_t *it, *af; } g_lv[4];
 static void lv_apply1(int v);
 static void lv_apply(void) { for (int v = 1; v <= 3; v++) lv_apply1(v); }
 static void lv_apply1(int v) {
     uint64_t T = rd((uint64_t)(uintptr_t)(B + 0x2d64a18 + v * 16)); if (!T) return;
     for (int w = 1; w < v; w++) if (g_lv[w].T == T) return;   // 两个版本共用一张表：只改一次 | two versions sharing one table: change it once
     int on = atomic_load(&g_nolv); __typeof__(&g_lv[0]) L = &g_lv[v];
-    if (L->T != T) { free(L->u); free(L->s); free(L->it); memset(L, 0, sizeof *L); L->T = T; }
+    if (L->T != T) { free(L->u); free(L->s); free(L->it); free(L->af); free(L->sk); memset(L, 0, sizeof *L); L->T = T; }
     if (on == L->on) return;
-    uint64_t ur = rd(T + 0x13e8), sr = rd(T + 0x13c8), ir = rd(T + 0x15c0);
+    uint64_t ur = rd(T + 0x13e8), sr = rd(T + 0x13c8), ir = rd(T + 0x15c0), ar = rd(T + 0x1608), kr = rd(T + 0x11e8);
     if (!L->u) {   // 存原值 | keep the originals
         L->nu = (uint32_t)rd(T + 0x13f0); L->ns = (uint32_t)rd(T + 0x13d0); L->ni = *(uint32_t *)(uintptr_t)(T + 0x15c8);
         if (!ur || !sr || !ir || L->nu > 4096 || L->ns > 4096 || L->ni > 8192) { LOG("【红】刷装备：免等级 表不对（暗金 %u、套装 %u、物品 %u 行）", L->nu, L->ns, L->ni); L->on = on; return; }
@@ -151,12 +158,19 @@ static void lv_apply1(int v) {
         for (uint32_t k = 0; k < L->nu; k++) L->u[k] = *(int16_t *)(uintptr_t)(ur + k * 0x15c + 0x3a);
         for (uint32_t k = 0; k < L->ns; k++) L->s[k] = *(int16_t *)(uintptr_t)(sr + k * 0x1cc + 0x36);
         for (uint32_t k = 0; k < L->ni; k++) L->it[k] = *(uint8_t *)(uintptr_t)(ir + k * 0x1c0 + 0x14f);
+        L->na = (uint32_t)rd(T + 0x1610); L->nk = (uint32_t)rd(T + 0x11f0);
+        if (ar && kr && L->na <= 8192 && L->nk <= 4096 && (L->af = malloc(2 * L->na + 2)) && (L->sk = malloc(2 * L->nk + 2))) {
+            for (uint32_t k = 0; k < L->na; k++) { L->af[2 * k] = *(uint8_t *)(uintptr_t)(ar + k * 0x8c + 0x65); L->af[2 * k + 1] = *(uint8_t *)(uintptr_t)(ar + k * 0x8c + 0x68); }
+            for (uint32_t k = 0; k < L->nk; k++) L->sk[k] = *(int16_t *)(uintptr_t)(kr + k * 0x2ec + 0x214);
+        } else { LOG("【红】刷装备：免等级 词缀表 / 技能表不对（词缀 %u、技能 %u 行），这两类不改", L->na, L->nk); free(L->af); free(L->sk); L->af = NULL; L->sk = NULL; L->na = L->nk = 0; }
     }
     if (!L->u || !L->s || !L->it) { L->on = on; return; }   // 没存到原值就什么都不改 | without the originals nothing is changed
     for (uint32_t k = 0; k < L->nu; k++) *(int16_t *)(uintptr_t)(ur + k * 0x15c + 0x3a) = on ? 0 : L->u[k];
     for (uint32_t k = 0; k < L->ns; k++) *(int16_t *)(uintptr_t)(sr + k * 0x1cc + 0x36) = on ? 0 : L->s[k];
     for (uint32_t k = 0; k < L->ni; k++) *(uint8_t *)(uintptr_t)(ir + k * 0x1c0 + 0x14f) = on ? 0 : L->it[k];
-    L->on = on; LOG("刷装备：装备免等级需求 %s（版本 %d：暗金 %u、套装 %u、物品 %u 行）", on ? "开" : "关，原值写回", v, L->nu, L->ns, L->ni);
+    for (uint32_t k = 0; L->af && k < L->na; k++) { *(uint8_t *)(uintptr_t)(ar + k * 0x8c + 0x65) = on ? 0 : L->af[2 * k]; *(uint8_t *)(uintptr_t)(ar + k * 0x8c + 0x68) = on ? 0 : L->af[2 * k + 1]; }
+    for (uint32_t k = 0; L->sk && k < L->nk; k++) *(int16_t *)(uintptr_t)(kr + k * 0x2ec + 0x214) = on ? 0 : L->sk[k];
+    L->on = on; LOG("刷装备：装备免等级需求 %s（版本 %d：暗金 %u、套装 %u、物品 %u、词缀 %u、技能 %u 行）", on ? "开" : "关，原值写回", v, L->nu, L->ns, L->ni, L->na, L->nk);
 }
 
 static int gs(uint64_t u, int st) { return ((int (*)(uint64_t, int, int))(B + 0x5b9290))(u, st, 0); }
@@ -180,8 +194,10 @@ static uint64_t make(uint64_t G, uint64_t player, const char *code4, int q, int 
 // 写进物品自己的词缀表（0x5bcf20(物品, 0, 0x40)，没有就建）：存档写的是这张表；0x5bc1f0 改的基础表不进存档（stat_re 报告第 2 节），build 13 及以前读档会丢
 // Remove strength / dexterity requirements: bring stat 91's effective value to -100 by the difference "effective - current", so it does not stack wrongly with the item's own reduction.
 // Written into the item's own affix list (0x5bcf20(item, 0, 0x40), created if absent): the save writes this list; the base list that 0x5bc1f0 changes is not saved (stat_re report section 2), so build 13 and earlier lose it on reload
+// 已成词的物品写进原版成词时建好的那张表（state 0xab，同样存档），不给普通底材另建物品词缀表 | a formed runeword is written into the list the original built when the word formed (state 0xab, also saved), instead of creating an item affix list on a normal base
 static void no_req(uint64_t it) {
-    uint64_t M = affix_list(it, 0); uint8_t v = *(uint8_t *)(uintptr_t)(it + 0x1bd);
+    uint64_t d0 = rd(it + 0x10); int rw = d0 && (*(uint32_t *)(uintptr_t)(d0 + 0x18) & 0x04000000);
+    uint64_t M = affix_list(it, rw); uint8_t v = *(uint8_t *)(uintptr_t)(it + 0x1bd);
     if (!M) { LOG("【红】刷装备：找不到词缀表，力量 / 敏捷需求没去"); return; }
     int cur = ((int (*)(uint8_t, uint64_t, int, int))(B + 0x5bc690))(v, M, 91, 0), total = gs(it, 91), want = cur + (-100 - total);
     if (want < -100) want = -100;
@@ -197,12 +213,25 @@ static int pick_up(uint64_t G, uint64_t player, uint64_t it) {
     return *(uint32_t *)(uintptr_t)(it + 0xc) == 0;
 }
 // 物品等级至少 99，也不低于目标行的物品等级（毁灭、地狱火炬是 110；原版指定生成要求物品等级 ≥ 行等级） | item level at least 99 and not below the target row's level (Annihilus and Hellfire Torch are 110; forced creation requires item level >= row level)
+// 整件重发给客户端：清掉「已鉴定」位再走一次原版鉴定 0x78acf0，它会置回这一位并自己广播物品更新（0x9c / 0x9d，见 diag.c 免费鉴定）
+// Resend the whole item to the client: clear the identified bit and run the original identify 0x78acf0 again; it sets the bit back and broadcasts the item update itself (0x9c / 0x9d, see free identify in diag.c)
+static void resend(uint64_t G, uint64_t player, uint64_t it) {
+    uint64_t d = rd(it + 0x10); if (!d) return; *(uint32_t *)(uintptr_t)(d + 0x18) &= ~0x10u;
+    int r = ((int (*)(uint64_t, uint64_t, uint64_t))(B + 0x78acf0))(G, player, it);
+    LOG("刷装备：重发物品 id %u → %d（已鉴定位 %s）", *(uint32_t *)(uintptr_t)(it + 8), r, *(uint32_t *)(uintptr_t)(d + 0x18) & 0x10 ? "已置回" : "【红】没置回");
+}
 static uint64_t make_ready2(uint64_t G, uint64_t player, const char *code4, int q, int row, int ilvl, int sockets, int eth, int *in_bag) {
     uint64_t it = make(G, player, code4, q, row, ilvl, eth); if (!it) return 0;
     if (sockets > 0) { ((void (*)(uint64_t, int))(B + 0x5754a0))(it, sockets); LOG("刷装备：%.4s 设 %d 孔 → 读回 %d", code4, sockets, gs(it, 194)); }
     ((int (*)(uint64_t, uint64_t, uint64_t))(B + 0x78acf0))(G, player, it);
+    // 符文之语底材（普通品质、带孔）镶嵌前不写词缀、不去需求：普通底材本来没有物品词缀表，提前写会新建一张，真机上镶到成词的最后一颗时被原版退回光标
+    // （build 14.1 日志：正义之手前 3 颗镶进、第 4 颗留在光标）。成词以后再写（lo_sock 末尾 / rw_post），并重发整件
+    // Runeword bases (normal quality, socketed) get no affixes and no requirement removal before socketing: a normal base has no item affix list, writing early creates one, and on the device the last rune that would form the word was returned to the cursor
+    // (build 14.1 log: Hand of Justice took 3 runes, the 4th stayed on the cursor). They are written after the word forms (end of lo_sock / rw_post), and the whole item is resent
+    int rw_base_item = q == 2 && sockets > 0;
+    if (g_aff && rw_base_item) g_aff = NULL;
     if (g_aff) { const struct lo_aff *a = g_aff; g_aff = NULL; if (!apply_list(it, 0, a)) g_aff_bad = 1; }   // 一键配装：捡起前写词缀，捡起时整件发给客户端（在去需求之前：定制件要先清表） | loadout: affixes written before pick-up, so the whole item goes to the client on pick-up (before the requirement removal: custom pieces wipe the list first)
-    if (q != 2 || sockets > 0) no_req(it);   // 符文本身没有力量 / 敏捷需求，不写 | runes have no strength / dexterity requirement, left alone
+    if (q != 2) no_req(it);   // 符文本身没有力量 / 敏捷需求，不写 | runes have no strength / dexterity requirement, left alone
     LOG("刷装备：%.4s 物品版本 %u（游戏 %u），需求等级 %d，属性 91 有效值 %d", code4, *(uint8_t *)(uintptr_t)(it + 0x1bd), *(uint8_t *)(uintptr_t)(G + 0x106),
         ((int (*)(uint64_t, uint64_t))(B + 0x571580))(it, player), gs(it, 91));
     *in_bag = pick_up(G, player, it);
@@ -227,6 +256,7 @@ static void spawn(uint64_t G, uint64_t player, int kind, int i) {
     for (int k = 0; k < n; k++) { int rin = 0; uint64_t r = make_ready(G, player, w->runes[k], 2, -1, 0, 0, &rin);
         if (!r || !rin) { snprintf(msg, sizeof msg, dm_str(B, r ? "dmItemNoRoom" : "dmItemFail"), nm); dm_game_notice(B, msg); return; } }
     dm_runeword_auto(*(uint32_t *)(uintptr_t)(base + 8), rec);
+    g_rwpend = *(uint32_t *)(uintptr_t)(base + 8); g_rwpend_at = *(uint32_t *)(uintptr_t)(G + 0x170);
     snprintf(msg, sizeof msg, dm_str(B, "dmItemRwOpen"), nm); dm_game_notice(B, msg);
 }
 
@@ -405,6 +435,9 @@ static int lo_sock(uint64_t G, uint64_t pl, const lo_piece_t *pc) {
     if (++J.k == J.nr) { uint64_t d = rd(b + 0x10); int rw = d && (*(uint32_t *)(uintptr_t)(d + 0x18) & 0x04000000);
         LOG("一键配装：「%s」镶完，成词标志 %s", pc->what, rw ? "有" : pc->kind == LK_RUNEWORD ? "【红】没有" : "（不是符文之语）");
         if (pc->kind == LK_RUNEWORD && !rw) { lo_stop("dmLoFail", pc->what); return 0; }
+        if (pc->kind == LK_RUNEWORD) { struct lo_aff ab = { pc->what, pc->bst, pc->nbst, 0 };   // 成词后再写底材自带词缀与去需求（见 make_ready2） | base extras and requirement removal only after the word forms (see make_ready2)
+            if (pc->nbst && !apply_list(b, 0, &ab)) { lo_stop("dmLoFail", pc->what); return 0; }
+            no_req(b); }
         struct lo_aff a = { pc->what, pc->st, pc->nst, 0 };   // 满值写进成词那张表；穿上时整件重发给客户端 | max rolls into the runeword list; the whole item is resent to the client when equipped
         if (pc->kind == LK_RUNEWORD && pc->nst && !apply_list(b, 1, &a)) { lo_stop("dmLoFail", pc->what); return 0; } }
     return 1;
@@ -487,9 +520,18 @@ static void lo_tick(uint64_t G, uint64_t pl) {
     }
 }
 
+// 刷装备页的符文之语：一键合成在客户端跑，服务端不知道何时成词。这里盯着那件底材，见到成词标志 0x04000000 就去力量 / 敏捷需求并重发；2 分钟没成词就不等了
+// Runewords from the item page: one-tap crafting runs on the client, so the server does not know when the word forms. Watch that base here; once the word flag 0x04000000 shows, remove strength / dexterity requirements and resend; give up after 2 minutes without a word
+static void rw_post(uint64_t G, uint64_t player) {
+    if (!g_rwpend) return; uint32_t t = *(uint32_t *)(uintptr_t)(G + 0x170);
+    uint64_t it = own_item(player, g_rwpend), d = it ? rd(it + 0x10) : 0;
+    if (d && (*(uint32_t *)(uintptr_t)(d + 0x18) & 0x04000000)) { no_req(it); resend(G, player, it); LOG("刷装备：符文之语 id %u 成词后去需求", g_rwpend); g_rwpend = 0; return; }
+    if (t - g_rwpend_at > 25 * 120) { LOG("刷装备：符文之语 id %u 2 分钟没成词，不再等", g_rwpend); g_rwpend = 0; }
+}
 void dm_itemgen_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
     B = main_base; if (!G || !player) return;
     lv_apply();
+    rw_post(G, player);
     lo_tick(G, player);
     if (J.st != LO_IDLE) return;   // 配装进行中不接单件请求 | no single-item requests while a loadout runs
     int r = atomic_exchange(&g_req, -1); if (r < 0) return;
