@@ -19,7 +19,6 @@
 #include "dm_summon.h"
 #include "dm_bossrush.h"
 #include "dm_unit.h"
-#include "dm_hud_exp.h"
 #include "hle.h"
 #include "dm.h"
 #include "dm_i18n.h"
@@ -201,11 +200,22 @@ static void cheat(uint64_t player, int op, int arg) {
     case DM_CHEAT_SKILLPTS: ss(player, 5, gs(player, 5) + arg); dm_game_notice(B, dm_str(B, "dmCheatSkillDone")); return;
     case DM_CHEAT_REFILL: ss(player, 6, gs(player, 7)); ss(player, 8, gs(player, 9)); ss(player, 10, gs(player, 11)); return;
     default: return; }
-    if (to > 99) to = 99;
+    // 升级走原版加经验 0x7dd9e0(游戏, 玩家, 原等级, 经验增量)：杀怪分经验最终调的就是它，按经验表连升多级并一次结算每级成长（属性点 / 技能点 / 生命法力耐力）与升级特效。
+    // 门槛与等级上限都读运行时经验表 [数据表 + 0x1500]：+4 × 职业 = 该职业等级上限，+0x24 × 等级 + 4 × 职业 = 到该级的累计经验；基础等级 / 经验用 0x5b9110 读（同原版累加器）。
+    // 不先写等级：先写的话成长差值就丢了。增量不走 0x7dd150（那里夹 0x7fffff、按等级差打折，还会乘经验加成）
+    // Level up goes through the original add-experience 0x7dd9e0(game, player, old level, delta): what monster-kill experience ends in; it levels up through the table, possibly several levels, settling each level's growth (stat / skill points, life / mana / stamina) and the level-up effect in one go.
+    // Thresholds and the level cap come from the runtime experience table [data table + 0x1500]: +4 × class = that class's level cap, +0x24 × level + 4 × class = cumulative experience for that level; base level / experience are read with 0x5b9110 (same as the original accumulator).
+    // The level is not written first: that would lose the growth delta. The delta does not go through 0x7dd150 (which clamps to 0x7fffff, discounts by level difference and multiplies by the experience bonus)
+    uint8_t ver = *(uint8_t *)(uintptr_t)(g_G + 0x106); uint64_t T = ver >= 1 && ver <= 3 ? rd((uint64_t)(uintptr_t)(B + 0x2d64a18 + ver * 16)) : 0, E = T ? rd(T + 0x1500) : 0;
+    if (!E) { LOG("通用修改：经验表没取到，不升级"); return; }
+    uint32_t c = *(uint32_t *)(uintptr_t)(player + 4); if (c >= 8) c = 0;
+    uint32_t (*base)(uint64_t, int, int) = (uint32_t (*)(uint64_t, int, int))(B + 0x5b9110);
+    int cap = (int)*(uint32_t *)(uintptr_t)(E + 4 * c); lv = (int)base(player, 12, 0);
+    if (to > cap) to = cap;
     if (to <= lv) return;
-    // 升级：等级、经验写到新等级的门槛，按原版每级 5 属性点、1 技能点补上（生命 / 法力的每级成长不在这里，要读档后由游戏按等级重算——待真机看）
-    // Level up: level, and experience set to the new level's threshold; 5 stat points and 1 skill point per level are added as in the original (per-level life / mana growth is not done here -- to be checked on device whether the game recomputes it)
-    ss(player, 12, to); ss(player, 13, (int)k_exp[to - 1]); ss(player, 4, gs(player, 4) + 5 * (to - lv)); ss(player, 5, gs(player, 5) + (to - lv));
+    uint32_t xp = base(player, 13, 0), need = *(uint32_t *)(uintptr_t)(E + 0x24ull * (uint64_t)to + 4 * c);
+    if (need > xp) ((void (*)(uint64_t, uint64_t, int, uint32_t))(B + 0x7dd9e0))(g_G, player, lv, need - xp);
+    to = (int)base(player, 12, 0);
     LOG("通用修改：等级 %d → %d", lv, to); char msg[96]; snprintf(msg, sizeof msg, dm_str(B, "dmCheatLevelDone"), to); dm_game_notice(B, msg);
 }
 
