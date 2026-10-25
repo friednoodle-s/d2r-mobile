@@ -344,8 +344,9 @@ void mtl_init(void) {
     rd.initialCapacity = 4096;
     NSError *re = nil;
     g_res = [g_dev newResidencySetWithDescriptor:rd error:&re];
-    if (!g_res) MDIE("建立 MTLResidencySet 失败");
-    [g_q addResidencySet:g_res];
+    // 云端虚拟显卡（Apple Paravirtual device）建不了驻留集：只为无人值守测试放行（DM_TEST_NO_RESIDENCY，画面可能不对，游戏逻辑照跑）；真机建得了，不受影响
+    if (!g_res && !getenv("DM_TEST_NO_RESIDENCY")) MDIE("建立 MTLResidencySet 失败");
+    if (g_res) [g_q addResidencySet:g_res]; else fprintf(stderr, "[dm] [nvn-mtl] 【红】建立 MTLResidencySet 失败（%s），DM_TEST_NO_RESIDENCY 放行\n", re.localizedDescription.UTF8String ?: "?");
     { void crash_set_wait_dump(void (*fn)(void)); void mtl_wait_state_dump(void); crash_set_wait_dump(mtl_wait_state_dump); }
 #if !DM_NVN_M3
     dispatch_queue_attr_t feedback_attr = dispatch_queue_attr_make_with_qos_class(DISPATCH_QUEUE_SERIAL, QOS_CLASS_USER_INTERACTIVE, 0);
@@ -354,7 +355,7 @@ void mtl_init(void) {
     g_q4 = [g_dev newMTL4CommandQueueWithDescriptor:q4d error:&re];
     if (!g_q4) MDIE("建立 MTL4CommandQueue 失败");
     stream_queue_once();
-    [g_q4 addResidencySet:g_res];
+    if (g_res) [g_q4 addResidencySet:g_res];
 #endif
     g_alloc_n = 3;
 #if !DM_NVN_M3
