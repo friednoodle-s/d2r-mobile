@@ -6,6 +6,9 @@
 #include "../../host/dm_summon.h"
 #include "dm_i18n.h"
 
+// 面板右下角的版本号：每次交给玩家测试的构建都改这里，截图里一眼看出装的是哪一版 | version shown at the panel's bottom-right: bumped for every build handed out for testing, so a screenshot shows which one is installed
+#define DM_SUMMON_UI_VER "summon console 6"
+
 @interface DmSummonPanel : NSObject
 @property (nonatomic, strong) UIButton *fab;
 @property (nonatomic, strong) UIView *panel;
@@ -14,7 +17,7 @@
 @property (nonatomic, strong) UIScrollView *pageCheat;   // 按钮 + 一列开关，比面板高，可滚动 | buttons + a column of switches, taller than the panel, scrollable
 @property (nonatomic, strong) NSMutableArray<UIButton *> *bossButtons;
 @property (nonatomic, strong) UILabel *countLabel, *aliveLabel;
-@property (nonatomic, strong) UIStepper *stepper;
+@property (nonatomic) int count;   // 召唤数量 1–10（−/+ 两个按钮调；系统 UIStepper 在深色面板上看不见，真机截图） | summon count 1–10 (two −/+ buttons; the system UIStepper is invisible on the dark panel, device screenshot)
 @property (nonatomic, strong) NSTimer *timer;
 @property (nonatomic) int boss;
 @property (nonatomic) BOOL moved;   // 玩家拖过按钮：之后不再自动放回左上角 | the player has dragged the button: no longer snapped back to the top-left
@@ -56,6 +59,13 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     _panel.layer.borderWidth = 1; _panel.layer.borderColor = [UIColor colorWithRed:0.62 green:0.5 blue:0.3 alpha:1].CGColor;
     [host addSubview:_panel];
     _tabs = [[UISegmentedControl alloc] initWithItems:@[@(dm_ui("dmSumTabSummon")), @(dm_ui("dmSumTabCheat"))]]; _tabs.selectedSegmentIndex = 0;
+    // 系统缺省样式在深色面板上没选中那页的字几乎看不见（真机截图：「修改」页签没人发现）：底色、选中色、字色都显式给
+    // With the system default style, the unselected segment's text is almost invisible on the dark panel (device screenshot: nobody found the "Cheats" tab): background, selected tint and text colors are all set explicitly
+    _tabs.backgroundColor = [UIColor colorWithWhite:0.22 alpha:1]; _tabs.selectedSegmentTintColor = [UIColor colorWithRed:0.55 green:0.42 blue:0.18 alpha:1];
+    [_tabs setTitleTextAttributes:@{ NSForegroundColorAttributeName: UIColor.whiteColor, NSFontAttributeName: [UIFont boldSystemFontOfSize:16] } forState:UIControlStateNormal];
+    [_tabs setTitleTextAttributes:@{ NSForegroundColorAttributeName: UIColor.whiteColor, NSFontAttributeName: [UIFont boldSystemFontOfSize:16] } forState:UIControlStateSelected];
+    _tabs.layer.borderWidth = 1; _tabs.layer.borderColor = [UIColor colorWithRed:0.62 green:0.5 blue:0.3 alpha:1].CGColor;
+    UILabel *ver = mk_label(@DM_SUMMON_UI_VER, 11); ver.tag = 905; ver.textColor = [UIColor colorWithWhite:0.6 alpha:1]; ver.textAlignment = NSTextAlignmentRight; [_panel addSubview:ver];
     [_tabs addTarget:self action:@selector(tabChanged) forControlEvents:UIControlEventValueChanged];
     [_panel addSubview:_tabs];
     UIButton *close = mk_button(@(dm_ui("dmSumClose")), self, @selector(toggle)); close.tag = 900; [_panel addSubview:close];
@@ -63,8 +73,9 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     _pageSummon = [UIView new]; [_panel addSubview:_pageSummon];
     for (int i = 0; i < DM_SUM_NBOSS; i++) { UIButton *b = mk_button(@(dm_ui(dm_summon_key(i))), self, @selector(pickBoss:)); b.tag = i; [_bossButtons addObject:b]; [_pageSummon addSubview:b]; }
     _countLabel = mk_label(@"", 16); [_pageSummon addSubview:_countLabel];
-    _stepper = [UIStepper new]; _stepper.minimumValue = 1; _stepper.maximumValue = 10; _stepper.value = 1;
-    [_stepper addTarget:self action:@selector(countChanged) forControlEvents:UIControlEventValueChanged]; [_pageSummon addSubview:_stepper]; [self countChanged];
+    _count = 1;
+    UIButton *minus = mk_button(@"−", self, @selector(countDown)); minus.tag = 903; [_pageSummon addSubview:minus];
+    UIButton *plus = mk_button(@"+", self, @selector(countUp)); plus.tag = 904; [_pageSummon addSubview:plus]; [self countChanged];
     UIButton *go = mk_button(@(dm_ui("dmSumGo")), self, @selector(summon)); go.tag = 901; go.backgroundColor = [UIColor colorWithRed:0.42 green:0.1 blue:0.07 alpha:1]; [_pageSummon addSubview:go];
     UIButton *clr = mk_button(@(dm_ui("dmSumClear")), self, @selector(clearAll)); clr.tag = 902; [_pageSummon addSubview:clr];
     _aliveLabel = mk_label(@"", 14); [_pageSummon addSubview:_aliveLabel];
@@ -87,11 +98,12 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     _panel.frame = CGRectMake((b.size.width - w) / 2, (b.size.height - h) / 2, w, h);
     _tabs.frame = CGRectMake(pad, pad, w - 2 * pad - 80, 34);
     [_panel viewWithTag:900].frame = CGRectMake(w - pad - 72, pad, 72, 34);
-    CGRect page = CGRectMake(pad, pad + 44, w - 2 * pad, h - 2 * pad - 44); _pageSummon.frame = page; _pageCheat.frame = page;
+    [_panel viewWithTag:905].frame = CGRectMake(w - pad - 160, h - 18, 160, 14);
+    CGRect page = CGRectMake(pad, pad + 44, w - 2 * pad, h - 2 * pad - 44 - 8);   // 底下留出版本号那一行 | leave the version line free at the bottom _pageSummon.frame = page; _pageCheat.frame = page;
     CGFloat pw = page.size.width, bw = (pw - 2 * 8) / 3, bh = 44;
     for (int i = 0; i < DM_SUM_NBOSS; i++) _bossButtons[i].frame = CGRectMake((i % 3) * (bw + 8), (i / 3) * (bh + 8), bw, bh);
     CGFloat y = 2 * (bh + 8) + 4;
-    _countLabel.frame = CGRectMake(0, y, 90, 36); _stepper.frame = CGRectMake(96, y + 2, 94, 32); _aliveLabel.frame = CGRectMake(pw - 110, y, 110, 36);
+    _countLabel.frame = CGRectMake(0, y, 90, 36); [_pageSummon viewWithTag:903].frame = CGRectMake(96, y - 2, 44, 40); [_pageSummon viewWithTag:904].frame = CGRectMake(148, y - 2, 44, 40); _aliveLabel.frame = CGRectMake(pw - 110, y, 110, 36);
     y += 44;
     [_pageSummon viewWithTag:901].frame = CGRectMake(0, y, (pw - 8) / 2, bh); [_pageSummon viewWithTag:902].frame = CGRectMake((pw + 8) / 2, y, (pw - 8) / 2, bh);
     int k = 0; for (UIView *v in _pageCheat.subviews) if ([v isKindOfClass:UIButton.class]) { v.frame = CGRectMake((k % 3) * (bw + 8), (k / 3) * (bh + 8), bw, bh); k++; }
@@ -122,8 +134,10 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
 - (void)tabChanged { _pageSummon.hidden = _tabs.selectedSegmentIndex != 0; _pageCheat.hidden = _tabs.selectedSegmentIndex != 1; }
 - (void)pickBoss:(UIButton *)b { _boss = (int)b.tag; [self refreshBoss]; }
 - (void)refreshBoss { for (UIButton *b in _bossButtons) b.backgroundColor = b.tag == _boss ? [UIColor colorWithRed:0.55 green:0.42 blue:0.18 alpha:1] : [UIColor colorWithWhite:0.22 alpha:1]; }
-- (void)countChanged { _countLabel.text = [NSString stringWithFormat:@(dm_ui("dmSumCount")), (int)_stepper.value]; }
-- (void)summon { dm_summon_request(_boss, (int)_stepper.value); }
+- (void)countChanged { _countLabel.text = [NSString stringWithFormat:@(dm_ui("dmSumCount")), _count]; }
+- (void)countDown { if (_count > 1) _count--; [self countChanged]; }
+- (void)countUp { if (_count < 10) _count++; [self countChanged]; }
+- (void)summon { dm_summon_request(_boss, _count); }
 - (void)clearAll { dm_summon_clear(); }
 - (void)cheat:(UIButton *)b { dm_cheat_request((int)(b.tag / 1000), (int)(b.tag % 1000)); }
 - (void)toggleSwitch:(UISwitch *)s { if (s.tag == 960) dm_cheat_set_god(s.on); else if (s.tag == 961) dm_cheat_set_inf_mana(s.on); else dm_cheat_set_buff((int)s.tag - 962, s.on); }
