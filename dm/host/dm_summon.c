@@ -288,9 +288,37 @@ static void cheat(uint64_t player, int op, int arg) {
     LOG("通用修改：等级 %d → %d", lv, to); char msg[96]; snprintf(msg, sizeof msg, dm_str(B, "dmCheatLevelDone"), to); dm_game_notice(B, msg);
 }
 
+// 云端自动测试脚本 DM_TEST_ACTS="秒:动作[:参数[:参数]];…"（秒 = 进局后服务端拍 / 25）。动作：sum:首领:数量 clear cheat:op:参数 god:0/1 mana:0/1 buff:编号:0/1
+// item:种类:序号 loadout nolevel:0/1 belt:列:行（喝腰带那格） stat（打一行玩家读数）。只给无人值守测试用，面板走的是同一批请求函数
+// Cloud test script DM_TEST_ACTS="sec:action[:arg[:arg]];..." (sec = server ticks since entering the game / 25). Actions as listed above; for unattended tests only, the panel uses the same request functions
+static void test_acts(uint64_t G, uint64_t player) {
+    static char buf[1024]; static int init, next; static uint64_t g0; static uint32_t t0;
+    if (!init) { init = 1; const char *e = getenv("DM_TEST_ACTS"); if (e) strlcpy(buf, e, sizeof buf); }
+    if (!buf[0]) return;
+    uint32_t t = *(uint32_t *)(uintptr_t)(G + 0x170); if (g0 != G) { g0 = G; t0 = t; next = 0; }
+    char *p = buf; for (int k = 0; k < next && p; k++) { p = strchr(p, ';'); if (p) p++; }
+    if (!p || !*p) return;
+    char item[96]; size_t n = strcspn(p, ";"); if (n >= sizeof item) n = sizeof item - 1; memcpy(item, p, n); item[n] = 0;
+    int sec = atoi(item); if ((t - t0) < (uint32_t)sec * 25) return;
+    next++; char *a = strchr(item, ':'); a = a ? a + 1 : item; int x = 0, y = 0; char *c = strchr(a, ':'); if (c) { x = atoi(c + 1); char *c2 = strchr(c + 1, ':'); if (c2) y = atoi(c2 + 1); }
+    LOG("DM_TEST_ACTS：第 %d 秒 %s", sec, a);
+    if (!strncmp(a, "sum", 3)) dm_summon_request(x, y ? y : 1);
+    else if (!strncmp(a, "clear", 5)) dm_summon_clear();
+    else if (!strncmp(a, "cheat", 5)) { char *c2 = c ? strchr(c + 1, ':') : NULL; dm_cheat_request(x, c2 ? y : 0); }
+    else if (!strncmp(a, "god", 3)) dm_cheat_set_god(x);
+    else if (!strncmp(a, "mana", 4)) dm_cheat_set_inf_mana(x);
+    else if (!strncmp(a, "buff", 4)) dm_cheat_set_buff(x, y);
+    else if (!strncmp(a, "item", 4)) { void dm_itemgen_request(int, int); dm_itemgen_request(x, y); }
+    else if (!strncmp(a, "loadout", 7)) { void dm_itemgen_loadout(void); dm_itemgen_loadout(); }
+    else if (!strncmp(a, "nolevel", 7)) { void dm_itemgen_set_nolevel(int); dm_itemgen_set_nolevel(x); }
+    else if (!strncmp(a, "belt", 4)) { void dm_belt_use(int, int); dm_belt_use(x, y); }
+    else if (!strncmp(a, "stat", 4)) LOG("DM_TEST_ACTS：玩家 等级 %d 经验 %d 金币 %d/%d 生命 %d/%d 法力 %d/%d 属性点 %d 技能点 %d 召唤 %d 只", gs(player, 12), gs(player, 13), gs(player, 14), gs(player, 15),
+        gs(player, 6) >> 8, gs(player, 7) >> 8, gs(player, 8) >> 8, gs(player, 9) >> 8, gs(player, 4), gs(player, 5), dm_summon_alive());
+}
 void dm_summon_tick(uint64_t G, uint64_t player, uint8_t *main_base) {
     B = main_base; if (!G || !player) return;
     if (G != g_G) { g_G = G; g_nids = 0; }
+    test_acts(G, player);
     int boss = atomic_exchange(&g_req_boss, -1); if (boss >= 0) summon(G, player, boss, atomic_load(&g_req_n));
     { void dm_itemgen_tick(uint64_t, uint64_t, uint8_t *); dm_itemgen_tick(G, player, main_base); }   // 刷装备（dm_itemgen.c） | item spawner (dm_itemgen.c)
     if (atomic_exchange(&g_req_clear, 0)) clear_all(G, player);
