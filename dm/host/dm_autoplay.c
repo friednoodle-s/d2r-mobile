@@ -107,7 +107,7 @@ static int monster_ok(uint64_t G, uint64_t u, int lv) {
 static int rank_of(uint64_t u) { uint64_t md = rd(u + 0x10); uint8_t r = md ? *(uint8_t *)(uintptr_t)(md + 0x1a) : 0; return (r & 0x0e) ? 1 : 0; }   // 超级独特 / 冠军 / 金怪 | super unique / champion / unique
 
 enum { MAXR = 1024, MAXSKIP = 256, MAXTRIED = 512 };
-static struct { uint64_t G; int lv, nr, done, cur_hits, nskip, ntried, idle, stuck_room; uint32_t cur, skip[MAXSKIP], tried[MAXTRIED]; uint64_t room[MAXR]; uint8_t seen[MAXR]; } S;
+static struct { uint64_t G; int lv, nr, done, cur_hits, nskip, ntried, idle, stuck_room, refused; uint32_t cur, skip[MAXSKIP], tried[MAXTRIED]; uint64_t room[MAXR]; uint8_t seen[MAXR]; } S;
 static void stop(const char *key) { atomic_store(&g_on, 0); atomic_store(&g_state, 0); LOG("自动清图：停（%s），房间 %d / %d，击杀 %d", key, S.done, S.nr, atomic_load(&g_kills)); dm_game_notice(B, dm_str(B, key)); memset(&S, 0, sizeof S); }
 static int skipped(uint32_t id) { for (int i = 0; i < S.nskip; i++) if (S.skip[i] == id) return 1; return 0; }
 static int tried(uint32_t id) { for (int i = 0; i < S.ntried; i++) if (S.tried[i] == id) return 1; return 0; }
@@ -152,8 +152,13 @@ void dm_autoplay_tick(uint64_t G, uint64_t pl, uint8_t *mb) {
         int ai = atomic_load(&g_aoe), near = 0;
         if (ai >= 0) for (int b = 0; b < 128; b++) for (uint64_t u = rd(G + 0x2630 + 8 * b); u; u = rd(u + 0x158)) { int x, y;
             if (monster_ok(G, u, lv) && unit_xy(u, &x, &y) && (x - bx) * (x - bx) + (y - by) * (y - by) <= 36) near++; }
-        int r; if (ai >= 0 && near >= 3) r = cast_at(G, pl, skill_node(pl, ai), bx, by); else r = cast_unit(G, pl, skill_node(pl, atomic_load(&g_main)), id);
-        if (r < 0) { stop("dmAutoNoSkill"); return; }
+        // 主攻 / 范围技能连着 3 次被原版拒绝（法力不够、距离、技能不许可…）就改用左手节点（一般是普通攻击）打这一下 | after 3 refusals in a row (mana, range, not allowed...) hit with the left-hand node (usually the plain attack) instead
+        int r, aoe = ai >= 0 && near >= 3; uint64_t nd = S.refused >= 3 ? rd(rd(pl + 0x100) + 8) : skill_node(pl, aoe ? ai : atomic_load(&g_main));
+        if (S.refused >= 3) { uint64_t sl = rd(pl + 0x100); r = sl && nd ? ((int (*)(uint64_t, uint64_t, uint32_t, uint32_t, uint64_t, int, int))(B + 0x6e7dc0))(G, pl, 1, id, nd, 1, 0) : -1; S.refused = 0; }
+        else r = aoe ? cast_at(G, pl, nd, bx, by) : cast_unit(G, pl, nd, id);
+        if (r < 0 && !nd) { stop("dmAutoNoSkill"); return; }
+        if (r != 0) S.refused++; else S.refused = 0;
+        { static int ln; if (ln++ < 40 || r != 0 && ln % 50 == 0) LOG("自动清图：%s 怪 id %u（距 %ld）→ 返回 %d，玩家模式 %u → %u，法力 %d", aoe ? "范围" : "主攻", id, (long)__builtin_sqrt((double)dd), r, pm, rd32(pl + 0xc), gs(pl, 8) >> 8); }
         S.idle = 0; return;
     }
     // 2. 捡：附近 25 格内要的东西，每件试一次 | 2. loot: wanted items within 25 cells, one try each
