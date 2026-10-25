@@ -493,4 +493,9 @@ static const struct { const char *k, *zh, *en, *es, *mx, *ru, *ko; } k_dm_i18n[]
     { "dmCheatDiff", "解锁全部难度", "Unlock Difficulties", "Desbloquear dificultades", "Desbloquear dificultades", "Открыть сложности", "모든 난이도 해제" },
     { "dmCheatWpDone", "已开启全部小站", "All waypoints unlocked", "Todos los portales desbloqueados", "Todos los portales desbloqueados", "Все путевые точки открыты", "모든 웨이포인트를 열었습니다" },
     { "dmCheatDiffDone", "已解锁噩梦和地狱：存档后回到选角界面生效", "Nightmare and Hell unlocked: takes effect after saving and returning to character select", "Pesadilla e Infierno desbloqueados: se aplica tras guardar y volver a la selección de personaje", "Pesadilla e Infierno desbloqueados: se aplica tras guardar y volver a la selección de personaje", "Кошмар и Ад открыты: вступит в силу после сохранения и выхода к выбору героя", "악몽과 지옥 해제: 저장 후 캐릭터 선택 화면으로 돌아가면 적용됩니다" },
+    { "dmSumBindType", "绑定类型", "Bind type", "Vínculo", "Vínculo", "Тип связи", "결속 유형" },
+    { "dmSumBindSkel", "骷髅", "Skeleton", "Esqueleto", "Esqueleto", "Скелет", "해골" },
+    { "dmSumBindDemon", "恶魔", "Demon", "Demonio", "Demonio", "Демон", "악마" },
+    { "dmSumBindValk", "女武神", "Valkyrie", "Valquiria", "Valquiria", "Валькирия", "발키리" },
+    { "dmSumBindNone", "不转化", "Hostile", "Hostil", "Hostil", "Враждебный", "적대" },
 };

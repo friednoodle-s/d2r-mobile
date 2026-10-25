@@ -21,6 +21,8 @@ void dm_cheat_set_buff(int buff, int on);
 int dm_cheat_buff(int buff);
 const char *dm_cheat_buff_key(int buff);       // 开关名字的串表键 | string table key of the toggle name
 int dm_summon_alive(void);                     // 界面显示：现存的召唤首领数（上一拍数的） | for the UI: number of summoned bosses alive (counted on the previous tick)
+void dm_summon_set_bind_mode(int mode);        // 绑定类型：0 骷髅复生、1 束缚恶魔、2 女武神、3 不转化（排查随从猝死用） | bind type: 0 Raise Skeleton, 1 Bind Demon, 2 Valkyrie, 3 do not bind (for chasing sudden minion deaths)
+int dm_summon_bind_mode(void);
 int dm_summon_owns(uint32_t id);               // 这个怪物单位是我们召唤出来的（刷怪积分牌不计、不提示；服务端线程） | this monster unit was summoned by us (not counted or announced by the kill board; server thread)
 const char *dm_summon_key(int boss);           // 首领名字的串表键（界面用 dm_ui 取） | string table key of the boss name (the UI looks it up with dm_ui)
 

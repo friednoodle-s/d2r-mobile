@@ -7,12 +7,12 @@
 #include "dm_i18n.h"
 
 // 面板右下角的版本号：每次交给玩家测试的构建都改这里，截图里一眼看出装的是哪一版 | version shown at the panel's bottom-right: bumped for every build handed out for testing, so a screenshot shows which one is installed
-#define DM_SUMMON_UI_VER "summon console 7"
+#define DM_SUMMON_UI_VER "summon console 8"
 
 @interface DmSummonPanel : NSObject
 @property (nonatomic, strong) UIButton *fab;
 @property (nonatomic, strong) UIView *panel;
-@property (nonatomic, strong) UISegmentedControl *tabs;
+@property (nonatomic, strong) UISegmentedControl *tabs, *bindSeg;
 @property (nonatomic, strong) UIView *pageSummon;
 @property (nonatomic, strong) UIScrollView *pageCheat;   // 按钮 + 一列开关，比面板高，可滚动 | buttons + a column of switches, taller than the panel, scrollable
 @property (nonatomic, strong) NSMutableArray<UIButton *> *bossButtons;
@@ -35,6 +35,12 @@ static UIButton *mk_button(NSString *title, id target, SEL action) {
     b.layer.cornerRadius = 8; b.layer.borderWidth = 1; b.layer.borderColor = [UIColor colorWithRed:0.62 green:0.5 blue:0.3 alpha:1].CGColor;
     [b addTarget:target action:action forControlEvents:UIControlEventTouchUpInside];
     return b;
+}
+static void style_seg(UISegmentedControl *g) {   // 深色面板上看得清的分段控件：灰底、金色选中、白字、金边 | a segmented control readable on the dark panel: gray base, gold selection, white text, gold border
+    g.backgroundColor = [UIColor colorWithWhite:0.22 alpha:1]; g.selectedSegmentTintColor = [UIColor colorWithRed:0.55 green:0.42 blue:0.18 alpha:1];
+    NSDictionary *a = @{ NSForegroundColorAttributeName: UIColor.whiteColor, NSFontAttributeName: [UIFont boldSystemFontOfSize:15] };
+    [g setTitleTextAttributes:a forState:UIControlStateNormal]; [g setTitleTextAttributes:a forState:UIControlStateSelected];
+    g.layer.borderWidth = 1; g.layer.borderColor = [UIColor colorWithRed:0.62 green:0.5 blue:0.3 alpha:1].CGColor;
 }
 static UILabel *mk_label(NSString *text, CGFloat size) {
     UILabel *l = [UILabel new]; l.text = text; l.textColor = UIColor.whiteColor; l.font = [UIFont systemFontOfSize:size]; l.adjustsFontSizeToFitWidth = YES; return l;
@@ -61,10 +67,7 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     _tabs = [[UISegmentedControl alloc] initWithItems:@[@(dm_ui("dmSumTabSummon")), @(dm_ui("dmSumTabCheat"))]]; _tabs.selectedSegmentIndex = 0;
     // 系统缺省样式在深色面板上没选中那页的字几乎看不见（真机截图：「修改」页签没人发现）：底色、选中色、字色都显式给
     // With the system default style, the unselected segment's text is almost invisible on the dark panel (device screenshot: nobody found the "Cheats" tab): background, selected tint and text colors are all set explicitly
-    _tabs.backgroundColor = [UIColor colorWithWhite:0.22 alpha:1]; _tabs.selectedSegmentTintColor = [UIColor colorWithRed:0.55 green:0.42 blue:0.18 alpha:1];
-    [_tabs setTitleTextAttributes:@{ NSForegroundColorAttributeName: UIColor.whiteColor, NSFontAttributeName: [UIFont boldSystemFontOfSize:16] } forState:UIControlStateNormal];
-    [_tabs setTitleTextAttributes:@{ NSForegroundColorAttributeName: UIColor.whiteColor, NSFontAttributeName: [UIFont boldSystemFontOfSize:16] } forState:UIControlStateSelected];
-    _tabs.layer.borderWidth = 1; _tabs.layer.borderColor = [UIColor colorWithRed:0.62 green:0.5 blue:0.3 alpha:1].CGColor;
+    style_seg(_tabs);
     UILabel *ver = mk_label(@DM_SUMMON_UI_VER, 11); ver.tag = 905; ver.textColor = [UIColor colorWithWhite:0.6 alpha:1]; ver.textAlignment = NSTextAlignmentRight; [_panel addSubview:ver];
     [_tabs addTarget:self action:@selector(tabChanged) forControlEvents:UIControlEventValueChanged];
     [_panel addSubview:_tabs];
@@ -78,6 +81,11 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     UIButton *plus = mk_button(@"+", self, @selector(countUp)); plus.tag = 904; [_pageSummon addSubview:plus]; [self countChanged];
     UIButton *go = mk_button(@(dm_ui("dmSumGo")), self, @selector(summon)); go.tag = 901; go.backgroundColor = [UIColor colorWithRed:0.42 green:0.1 blue:0.07 alpha:1]; [_pageSummon addSubview:go];
     UIButton *clr = mk_button(@(dm_ui("dmSumClear")), self, @selector(clearAll)); clr.tag = 902; [_pageSummon addSubview:clr];
+    // 绑定类型（排查随从猝死：同一局里各试一次就能比出来）| bind type (for chasing sudden minion deaths: one try of each in the same run compares them)
+    UILabel *bl = mk_label(@(dm_ui("dmSumBindType")), 14); bl.tag = 906; [_pageSummon addSubview:bl];
+    _bindSeg = [[UISegmentedControl alloc] initWithItems:@[@(dm_ui("dmSumBindSkel")), @(dm_ui("dmSumBindDemon")), @(dm_ui("dmSumBindValk")), @(dm_ui("dmSumBindNone"))]];
+    style_seg(_bindSeg); _bindSeg.selectedSegmentIndex = dm_summon_bind_mode();
+    [_bindSeg addTarget:self action:@selector(bindChanged) forControlEvents:UIControlEventValueChanged]; [_pageSummon addSubview:_bindSeg];
     _aliveLabel = mk_label(@"", 14); [_pageSummon addSubview:_aliveLabel];
 
     _pageCheat = [UIScrollView new]; _pageCheat.hidden = YES; _pageCheat.indicatorStyle = UIScrollViewIndicatorStyleWhite; [_panel addSubview:_pageCheat];
@@ -106,6 +114,7 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     _countLabel.frame = CGRectMake(0, y, 90, 36); [_pageSummon viewWithTag:903].frame = CGRectMake(96, y - 2, 44, 40); [_pageSummon viewWithTag:904].frame = CGRectMake(148, y - 2, 44, 40); _aliveLabel.frame = CGRectMake(pw - 110, y, 110, 36);
     y += 44;
     [_pageSummon viewWithTag:901].frame = CGRectMake(0, y, (pw - 8) / 2, bh); [_pageSummon viewWithTag:902].frame = CGRectMake((pw + 8) / 2, y, (pw - 8) / 2, bh);
+    y += bh + 8; [_pageSummon viewWithTag:906].frame = CGRectMake(0, y, 80, 32); _bindSeg.frame = CGRectMake(84, y, pw - 84, 32);
     int k = 0; for (UIView *v in _pageCheat.subviews) if ([v isKindOfClass:UIButton.class]) { v.frame = CGRectMake((k % 3) * (bw + 8), (k / 3) * (bh + 8), bw, bh); k++; }
     CGFloat top = ((k + 2) / 3) * (bh + 8) + 6;   // 按钮占的行数（每行 3 个） | rows taken by the buttons (3 per row)
     for (int i = 0; i < 2 + DM_NBUFF; i++) { CGFloat yy = top + i * 42; [_pageCheat viewWithTag:950 + i].frame = CGRectMake(0, yy, pw - 70, 36); [_pageCheat viewWithTag:960 + i].frame = CGRectMake(pw - 56, yy + 2, 51, 31); }
@@ -131,6 +140,7 @@ static UILabel *mk_label(NSString *text, CGFloat size) {
     UIView *host = _fab.superview; CGPoint d = [g translationInView:host]; [g setTranslation:CGPointZero inView:host];
     CGRect f = _fab.frame; f.origin.x = MAX(0, MIN(f.origin.x + d.x, host.bounds.size.width - f.size.width)); f.origin.y = MAX(0, MIN(f.origin.y + d.y, host.bounds.size.height - f.size.height)); _fab.frame = f;
 }
+- (void)bindChanged { dm_summon_set_bind_mode((int)_bindSeg.selectedSegmentIndex); }
 - (void)tabChanged { _pageSummon.hidden = _tabs.selectedSegmentIndex != 0; _pageCheat.hidden = _tabs.selectedSegmentIndex != 1; }
 - (void)pickBoss:(UIButton *)b { _boss = (int)b.tag; [self refreshBoss]; }
 - (void)refreshBoss { for (UIButton *b in _bossButtons) b.backgroundColor = b.tag == _boss ? [UIColor colorWithRed:0.55 green:0.42 blue:0.18 alpha:1] : [UIColor colorWithWhite:0.22 alpha:1]; }

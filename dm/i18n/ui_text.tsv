@@ -491,3 +491,8 @@ dmCheatWp	开全部小站	All Waypoints	Todos los portales		Все путевы�
 dmCheatDiff	解锁全部难度	Unlock Difficulties	Desbloquear dificultades		Открыть сложности	모든 난이도 해제	通用修改按钮（dm_summon_panel.m）
 dmCheatWpDone	已开启全部小站	All waypoints unlocked	Todos los portales desbloqueados		Все путевые точки открыты	모든 웨이포인트를 열었습니다	通用修改系统提示（dm_summon.c）
 dmCheatDiffDone	已解锁噩梦和地狱：存档后回到选角界面生效	Nightmare and Hell unlocked: takes effect after saving and returning to character select	Pesadilla e Infierno desbloqueados: se aplica tras guardar y volver a la selección de personaje		Кошмар и Ад открыты: вступит в силу после сохранения и выхода к выбору героя	악몽과 지옥 해제: 저장 후 캐릭터 선택 화면으로 돌아가면 적용됩니다	通用修改系统提示（dm_summon.c）
+dmSumBindType	绑定类型	Bind type	Vínculo		Тип связи	결속 유형	召唤页绑定类型标签（dm_summon_panel.m）
+dmSumBindSkel	骷髅	Skeleton	Esqueleto		Скелет	해골	绑定类型选项（dm_summon_panel.m）
+dmSumBindDemon	恶魔	Demon	Demonio		Демон	악마	绑定类型选项（dm_summon_panel.m）
+dmSumBindValk	女武神	Valkyrie	Valquiria		Валькирия	발키리	绑定类型选项（dm_summon_panel.m）
+dmSumBindNone	不转化	Hostile	Hostil		Враждебный	적대	绑定类型选项（dm_summon_panel.m）
