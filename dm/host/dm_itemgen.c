@@ -434,7 +434,9 @@ static int lo_make(uint64_t G, uint64_t pl, const lo_piece_t *pc) {
         it = make_ready2(G, pl, pc->base ? pc->base : w->base, 2, -1, 0, w->nsock, pc->eth, &in); want = 2;
         J.nr = w->nsock; for (int k = 0; k < w->nsock; k++) fill[k] = w->runes[k];
     } else {
-        g_aff = &a; it = make_ready2(G, pl, pc->base, pc->q, -1, 99, 0, pc->eth, &in); want = 0; J.nr = 0;
+        // 手工品质（8）的需求等级另按词缀数加算，免等级表管不到，1 级角色穿不上（云端测试 8.1：项链、腰带穿戴失败）；词缀反正整表重写，按稀有（6）生成
+        // Crafted quality (8) adds its own required level from the affix count, which the level-free tables do not cover, so a level-1 character cannot wear it (cloud test 8.1: amulet and belt failed); the affixes are rewritten anyway, so create it as rare (6)
+        g_aff = &a; it = make_ready2(G, pl, pc->base, pc->q == 8 ? 6 : pc->q, -1, 99, 0, pc->eth, &in); want = 0; J.nr = 0;
     }
     g_aff = NULL;
     uint64_t d = it ? rd(it + 0x10) : 0; int got = d ? *(int32_t *)(uintptr_t)d : -1;
@@ -560,7 +562,7 @@ static void lo_tick(uint64_t G, uint64_t pl) {
     case LO_MAKE: if (lo_make(G, pl, pc)) { J.k = 0; J.st = !J.nr ? LO_EQUIP : pc->kind == LK_RUNEWORD ? LO_RWJOB : LO_SOCK; } break;
     case LO_RWJOB: if (lo_rwjob(G, pl, pc)) J.st = LO_EQUIP; break;
     case LO_SOCK: if (lo_sock(G, pl, pc) && J.k == J.nr) J.st = LO_EQUIP; break;
-    case LO_SWITCH: if (cur_set(pl) == 1 || switch_set(G, pl)) J.st = LO_EQUIP; else lo_stop("dmLoFail", pc->what); break;
+    case LO_SWITCH: if (cur_set(pl) == 1 || switch_set(G, pl)) { J.st = LO_EQUIP; J.wait = 25; } else lo_stop("dmLoFail", pc->what); break;   // 切完武器组歇约 1 秒再穿（云端测试 8.1：切完同一拍穿战争召唤失败） | rest about 1 s after switching (cloud test 8.1: equipping Call to Arms in the same tick failed)
     case LO_EQUIP:   // 护身符（装备位 0）留在背包；佣兵件给佣兵；副手组的件先切过去 | charms (slot 0) stay in the inventory; mercenary pieces go to the mercenary; secondary-set pieces switch over first
         if (!pc->slot) { J.i++; J.st = LO_MAKE; break; }
         if (pc->merc) { if (lo_equip_merc(G, pl, pc)) { J.i++; J.st = LO_MAKE; } break; }
