@@ -182,7 +182,9 @@ static uint64_t make(uint64_t G, uint64_t player, const char *code4, int q, int 
     uint64_t room = room0 ? ((uint64_t (*)(uint64_t, uint64_t, int32_t *, int32_t *, int))(B + 0x6529e0))(G, room0, p0, p1, 1) : 0; if (!room) { LOG("刷装备：脚下找不到落点"); return 0; }
     uint8_t prm[0xd8]; memset(prm, 0, sizeof prm);
     *(uint64_t *)(prm + 0) = player; *(uint64_t *)(prm + 0x10) = G; *(int32_t *)(prm + 0x18) = ilvl < 99 ? 99 : ilvl; *(int32_t *)(prm + 0x20) = cls; *(int32_t *)(prm + 0x24) = 3;
-    *(int32_t *)(prm + 0x28) = p1[0]; *(int32_t *)(prm + 0x2c) = p1[1]; *(uint64_t *)(prm + 0x30) = room; *(uint16_t *)(prm + 0x38) = 1; *(uint16_t *)(prm + 0x3a) = *(uint16_t *)(uintptr_t)(G + 0x128); *(int32_t *)(prm + 0x40) = q;
+    // 落点用玩家脚下那一格本身，不用原版找的空位：脚下堆了丢下的旧件时空位会挪到 4、5 格外，捡起包嫌远不收（云端测试 6.1：物品 5493,4692、玩家 5489,4689）
+    // Use the player's own cell, not the free spot the original finds: with discarded pieces piled at the feet the free spot moves 4-5 cells away and the pick-up packet refuses it as too far (cloud test 6.1: item 5493,4692, player 5489,4689)
+    *(int32_t *)(prm + 0x28) = p0[0]; *(int32_t *)(prm + 0x2c) = p0[1]; *(uint64_t *)(prm + 0x30) = room; *(uint16_t *)(prm + 0x38) = 1; *(uint16_t *)(prm + 0x3a) = *(uint16_t *)(uintptr_t)(G + 0x128); *(int32_t *)(prm + 0x40) = q;
     if (row >= 0) { int32_t r1 = row + 1; memcpy(prm + 0x50, &r1, 4); }
     *(uint32_t *)(prm + 0xc0) = (eth ? 4 : 2) | 8;   // 生成控制：bit1 不出无形 / bit2 强制无形（佣兵件）、bit3 不随机打孔（孔数由 make_ready 指定） | creation control: bit1 no ethereal / bit2 force ethereal (mercenary pieces), bit3 no random sockets (make_ready sets the count)
     if (row >= 0 && q == 7) { uint32_t *w = (uint32_t *)(uintptr_t)(G + 0x3638 + 4 * ((uint32_t)row >> 5)); *w &= ~(1u << (row & 31)); }
