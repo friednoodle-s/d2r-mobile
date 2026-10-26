@@ -107,7 +107,7 @@ static int monster_ok(uint64_t G, uint64_t u, int lv) {
 static int rank_of(uint64_t u) { uint64_t md = rd(u + 0x10); uint8_t r = md ? *(uint8_t *)(uintptr_t)(md + 0x1a) : 0; return (r & 0x0e) ? 1 : 0; }   // 超级独特 / 冠军 / 金怪 | super unique / champion / unique
 
 enum { MAXR = 1024, MAXSKIP = 256, MAXTRIED = 512 };
-static struct { uint64_t G; int lv, nr, done, cur_hits, nskip, ntried, idle, stuck_room, refused; uint32_t cur, skip[MAXSKIP], tried[MAXTRIED]; uint64_t room[MAXR]; uint8_t seen[MAXR]; } S;
+static struct { uint64_t G; int lv, nr, done, cur_hits, nskip, ntried, idle, stuck_room, refused, item_jumps, quiet; uint32_t item_id; uint32_t cur, skip[MAXSKIP], tried[MAXTRIED]; uint64_t room[MAXR]; uint8_t seen[MAXR]; } S;
 static void stop(const char *key) { atomic_store(&g_on, 0); atomic_store(&g_state, 0); LOG("自动清图：停（%s），房间 %d / %d，击杀 %d", key, S.done, S.nr, atomic_load(&g_kills)); dm_game_notice(B, dm_str(B, key)); memset(&S, 0, sizeof S); }
 static int skipped(uint32_t id) { for (int i = 0; i < S.nskip; i++) if (S.skip[i] == id) return 1; return 0; }
 static int tried(uint32_t id) { for (int i = 0; i < S.ntried; i++) if (S.tried[i] == id) return 1; return 0; }
@@ -136,6 +136,9 @@ void dm_autoplay_tick(uint64_t G, uint64_t pl, uint8_t *mb) {
         LOG("自动清图：开始，关卡 %d，房间 %d 间，主攻 %d 范围 %d 拾取 %#x", lv, S.nr, atomic_load(&g_main), atomic_load(&g_aoe), atomic_load(&g_pick));
     }
     if (lv != S.lv) { stop("dmAutoLeft"); return; }
+    // 看门狗：10 秒（50 次思考）没出手、没捡、没换房，记一行并把当前目标 / 物品都跳过 | watchdog: 10 s (50 thinks) without a cast, pick-up or room change: log and skip the current target / item
+    if (++S.quiet > 50) { LOG("自动清图：10 秒没进展（模式 %u，目标 %u，物品 %u，房间 %d / %d），跳过当前目标与物品", pm, S.cur, S.item_id, S.done, S.nr);
+        if (S.cur && S.nskip < MAXSKIP) S.skip[S.nskip++] = S.cur; if (S.item_id && S.ntried < MAXTRIED) S.tried[S.ntried++] = S.item_id; S.cur = 0; S.item_id = 0; S.quiet = 0; }
     if (pm == 7 || pm == 8 || pm == 10 || pm == 18) return;   // 正在出招：等它做完 | mid-attack / cast: let it finish
     // 1. 打：上一个目标死了记一只；选新目标 | 1. fight: count the previous target if it died; pick a target
     if (S.cur) { uint64_t u = 0; for (int b = 0; b < 128 && !u; b++) for (uint64_t v = rd(G + 0x2630 + 8 * b); v; v = rd(v + 0x158)) if (rd32(v + 8) == S.cur) { u = v; break; }
@@ -159,7 +162,7 @@ void dm_autoplay_tick(uint64_t G, uint64_t pl, uint8_t *mb) {
         else { r = aoe ? cast_at(G, pl, nd, bx, by) : cast_unit(G, pl, nd, id);
             if (aoe && r != 0) { aoe = 0; nd = skill_node(pl, atomic_load(&g_main)); r = cast_unit(G, pl, nd, id); } }   // 范围技能被拒（多半在冷却）当拍改放主攻 | area skill refused (usually its cooldown): cast the main skill this tick instead
         if (r < 0 && !nd) { stop("dmAutoNoSkill"); return; }
-        if (r != 0) S.refused++; else S.refused = 0;
+        if (r != 0) S.refused++; else { S.refused = 0; S.quiet = 0; }
         { static int ln; if (ln++ < 40 || r != 0 && ln % 50 == 0) LOG("自动清图：%s 怪 id %u（距 %ld）→ 返回 %d，玩家模式 %u → %u，法力 %d", aoe ? "范围" : "主攻", id, (long)__builtin_sqrt((double)dd), r, pm, rd32(pl + 0xc), gs(pl, 8) >> 8); }
         S.idle = 0; return;
     }
@@ -170,8 +173,10 @@ void dm_autoplay_tick(uint64_t G, uint64_t pl, uint8_t *mb) {
             if (rd32(it) != 4 || rd32(it + 0xc) != 3 || tried(rd32(it + 8)) || !unit_xy(it, &x, &y) || unit_lv(it) != lv || !pick_wanted(it, mask)) continue;
             long d = (long)(x - px) * (x - px) + (long)(y - py) * (y - py); if (d <= 25 * 25 && (!bi || d < bdi)) { bi = it; bdi = d; ix = x; iy = y; } }
         if (bi) { uint32_t id = rd32(bi + 8);
-            if (bdi > 2 * 2) { if (!jump_to(G, pl, ix, iy) && S.ntried < MAXTRIED) S.tried[S.ntried++] = id; return; }
-            if (S.ntried < MAXTRIED) S.tried[S.ntried++] = id;
+            if (id != S.item_id) { S.item_id = id; S.item_jumps = 0; }
+            // 跳 3 次还够不着（旁边被占、落点远）就不捡了，免得原地反复跳（云端测试 5：卡住 3 分多钟） | three jumps and still out of reach (next cells taken, landing far): give up, so it does not jump on the spot forever (cloud test 5: stuck for 3+ minutes)
+            if (bdi > 2 * 2 && S.item_jumps < 3) { S.item_jumps++; if (!jump_to(G, pl, ix, iy) && S.ntried < MAXTRIED) S.tried[S.ntried++] = id; S.quiet = 0; return; }
+            if (S.ntried < MAXTRIED) S.tried[S.ntried++] = id; S.quiet = 0;
             uint64_t ip = rd(bi + 0x38); uint8_t pk[17] = { 0x16 }; uint32_t one = 1, q = rd32(rd(bi + 0x10)); memcpy(pk + 1, &id, 4); memcpy(pk + 5, (void *)(uintptr_t)(ip + 0x10), 4); memcpy(pk + 9, (void *)(uintptr_t)(ip + 0x14), 4); memcpy(pk + 13, &one, 4);
             uint32_t *busy = (uint32_t *)(uintptr_t)(G + 0x19050), old = *busy; *busy = 1; ((void (*)(uint64_t, uint64_t, uint8_t *, uint32_t))(B + 0x6e5b40))(G, pl, pk, 17); *busy = old;
             // 捡起后不再碰 bi：金币一捡就并进金币数、单位当场释放（云端测试读到乱的品质）；按 id 回地上物品表查还在不在 | after the pick-up bi is not touched again: gold merges into the gold count and the unit is freed at once (the cloud test read garbage quality); look the id up in the ground table instead
@@ -184,6 +189,6 @@ void dm_autoplay_tick(uint64_t G, uint64_t pl, uint8_t *mb) {
         long x = *(int32_t *)(uintptr_t)(r + 0x60) * 5 + *(int32_t *)(uintptr_t)(r + 0x68) * 5 / 2, y = *(int32_t *)(uintptr_t)(r + 0x64) * 5 + *(int32_t *)(uintptr_t)(r + 0x6c) * 5 / 2;
         long d = (x - px) * (x - px) + (y - py) * (y - py); if (bestr < 0 || d < brd) { bestr = i; brd = d; cx = x; cy = y; } }
     if (bestr < 0) { stop("dmAutoDone"); return; }
-    S.seen[bestr] = 1; S.done++; atomic_store(&g_rooms, S.done);
+    S.seen[bestr] = 1; S.done++; atomic_store(&g_rooms, S.done); S.quiet = 0;
     if (brd > 8 * 8) { int ok = jump_to(G, pl, (int)cx, (int)cy); if (!ok) { static int ln; if (ln++ < 20) LOG("自动清图：第 %d 间房 %ld,%ld 跳不过去，跳过", bestr, cx, cy); } }
 }
